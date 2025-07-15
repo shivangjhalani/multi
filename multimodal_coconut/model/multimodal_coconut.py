@@ -443,6 +443,9 @@ class MultimodalCoconut(nn.Module):
         """
         Generate text with multimodal continuous thought reasoning.
         
+        For now, we implement a simple generation approach that works with our CoCoNuT forward pass.
+        This avoids the InternVL3 generation complexity while still testing the core functionality.
+        
         Args:
             pixel_values: Image pixel values
             input_ids: Input token IDs
@@ -460,20 +463,64 @@ class MultimodalCoconut(nn.Module):
         self.eval()
         
         with torch.no_grad():
-            # Use the base model's generate method
-            # The forward method will handle the continuous thought processing
-            generated_ids = self.base_model.generate(
-                pixel_values=pixel_values,
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                image_flags=image_flags,
-                max_new_tokens=max_new_tokens,
-                do_sample=do_sample,
-                temperature=temperature,
-                top_p=top_p,
-                pad_token_id=self.eos_token_id,
-                **generation_kwargs
-            )
+            # Simple autoregressive generation using our forward method
+            generated_ids = input_ids.clone()
+            
+            for _ in range(max_new_tokens):
+                # Get current attention mask
+                current_attention_mask = torch.ones_like(generated_ids) if attention_mask is None else attention_mask
+                
+                # Extend attention mask if needed
+                if current_attention_mask.size(1) < generated_ids.size(1):
+                    padding = torch.ones(
+                        current_attention_mask.size(0), 
+                        generated_ids.size(1) - current_attention_mask.size(1),
+                        device=current_attention_mask.device,
+                        dtype=current_attention_mask.dtype
+                    )
+                    current_attention_mask = torch.cat([current_attention_mask, padding], dim=1)
+                
+                # Forward pass through our CoCoNuT model
+                outputs = self.forward(
+                    pixel_values=pixel_values,
+                    input_ids=generated_ids,
+                    attention_mask=current_attention_mask,
+                    image_flags=image_flags,
+                    use_cache=False  # Disable cache for simplicity in generation
+                )
+                
+                # Get next token logits
+                next_token_logits = outputs.logits[:, -1, :]
+                
+                # Apply temperature
+                if temperature != 1.0:
+                    next_token_logits = next_token_logits / temperature
+                
+                # Sample or take argmax
+                if do_sample:
+                    # Apply top-p sampling
+                    if top_p < 1.0:
+                        sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
+                        cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
+                        sorted_indices_to_remove = cumulative_probs > top_p
+                        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                        sorted_indices_to_remove[..., 0] = 0
+                        indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
+                        next_token_logits[indices_to_remove] = float('-inf')
+                    
+                    # Sample from the distribution
+                    probs = torch.softmax(next_token_logits, dim=-1)
+                    next_token = torch.multinomial(probs, num_samples=1)
+                else:
+                    # Greedy decoding
+                    next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+                
+                # Append the new token
+                generated_ids = torch.cat([generated_ids, next_token], dim=1)
+                
+                # Check for EOS token
+                if next_token.item() == self.eos_token_id:
+                    break
         
         return generated_ids
 
