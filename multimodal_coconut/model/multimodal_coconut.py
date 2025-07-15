@@ -118,8 +118,8 @@ class MultimodalCoconut(nn.Module):
         latent_indices = (input_ids == self.latent_token_id).nonzero(as_tuple=False)
         
         if len(latent_indices) == 0:
-            # No latent tokens - use standard forward pass
-            return self.base_model(
+            # No latent tokens - use standard multimodal forward pass
+            return self._standard_multimodal_forward(
                 pixel_values=pixel_values,
                 input_ids=input_ids,
                 attention_mask=attention_mask,
@@ -345,51 +345,89 @@ class MultimodalCoconut(nn.Module):
         return inputs_embeds
     
     def _standard_multimodal_forward(self,
-                                   inputs_embeds: torch.Tensor,
+                                   pixel_values: torch.FloatTensor,
+                                   input_ids: torch.LongTensor,
                                    attention_mask: Optional[torch.Tensor] = None,
                                    position_ids: Optional[torch.LongTensor] = None,
+                                   image_flags: Optional[torch.LongTensor] = None,
                                    past_key_values: Optional[List[torch.FloatTensor]] = None,
                                    labels: Optional[torch.LongTensor] = None,
                                    use_cache: Optional[bool] = None,
                                    output_attentions: Optional[bool] = None,
                                    output_hidden_states: Optional[bool] = None,
-                                   return_dict: Optional[bool] = None) -> CausalLMOutputWithPast:
+                                   return_dict: Optional[bool] = None,
+                                   **kwargs) -> CausalLMOutputWithPast:
         """
         Standard forward pass for multimodal inputs without latent tokens.
         
+        This uses the base InternVL3 model directly for standard multimodal processing.
+        For text-only inputs (pixel_values=None), we use the language model directly.
+        
         Args:
-            inputs_embeds: Combined multimodal embeddings
-            ... (other standard forward pass arguments)
+            pixel_values: Image pixel values (can be None for text-only)
+            input_ids: Text token IDs
+            attention_mask: Attention mask
+            position_ids: Position IDs
+            image_flags: Image flags
+            past_key_values: Past key values
+            labels: Target labels
+            use_cache: Whether to use cache
+            output_attentions: Whether to output attentions
+            output_hidden_states: Whether to output hidden states
+            return_dict: Whether to return dict
             
         Returns:
             CausalLMOutputWithPast with standard outputs
         """
-        outputs = self.base_model.language_model(
-            inputs_embeds=inputs_embeds,
+        # Handle text-only inputs by using the language model directly
+        if pixel_values is None:
+            # For text-only processing, use the language model component directly
+            inputs_embeds = self.base_model.language_model.get_input_embeddings()(input_ids)
+            
+            outputs = self.base_model.language_model(
+                inputs_embeds=inputs_embeds,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict
+            )
+            
+            # Compute loss if labels are provided
+            loss = None
+            if labels is not None:
+                shift_logits = outputs.logits[..., :-1, :].contiguous()
+                shift_labels = labels[..., 1:].contiguous()
+                loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
+                loss = loss_fct(
+                    shift_logits.view(-1, shift_logits.size(-1)),
+                    shift_labels.view(-1)
+                )
+            
+            return CausalLMOutputWithPast(
+                loss=loss,
+                logits=outputs.logits,
+                past_key_values=outputs.past_key_values,
+                hidden_states=outputs.hidden_states,
+                attentions=outputs.attentions,
+            )
+        
+        # For multimodal inputs, use the full InternVL3 model
+        return self.base_model(
+            pixel_values=pixel_values,
+            input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
+            image_flags=image_flags,
             past_key_values=past_key_values,
+            labels=labels,
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
-        )
-        
-        # Compute loss if labels provided
-        loss = None
-        if labels is not None:
-            logits = outputs.logits
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
-            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-        
-        return CausalLMOutputWithPast(
-            loss=loss,
-            logits=outputs.logits,
-            past_key_values=outputs.past_key_values,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
+            **kwargs
         )
     
     def generate(self,
