@@ -437,14 +437,14 @@ class MultimodalCollator:
                                    pixel_values_list: List[Union[torch.Tensor, List]], 
                                    num_patches_list: List[int]) -> Dict[str, torch.Tensor]:
         """
-        Collate multimodal features (images) into batch tensors
+        Collate multimodal features (images) into batch tensors following InternVL3 format
         
         Args:
             pixel_values_list: List of image tensors or lists [num_patches, 3, H, W]
             num_patches_list: List of patch counts for each image
             
         Returns:
-            Dictionary with batched multimodal tensors
+            Dictionary with batched multimodal tensors in InternVL3 format
         """
         # Ensure all pixel_values are tensors (handle both tensor and list formats)
         tensor_list = []
@@ -457,21 +457,19 @@ class MultimodalCollator:
                 pixel_values = torch.tensor(pixel_values, dtype=torch.float32)
             tensor_list.append(pixel_values)
         
-        # Handle variable number of patches by concatenating all patches
-        # and keeping track of patch boundaries
+        # Concatenate all image patches for InternVL3 format
+        # InternVL3 expects all patches concatenated along batch dimension
         all_pixel_values = torch.cat(tensor_list, dim=0)  # [total_patches, 3, H, W]
         
-        # Create patch boundaries for splitting during forward pass
-        patch_boundaries = []
-        current_pos = 0
-        for num_patches in num_patches_list:
-            patch_boundaries.append((current_pos, current_pos + num_patches))
-            current_pos += num_patches
+        # Create image flags indicating which samples have images
+        # InternVL3 uses image_flags to filter visual embeddings
+        batch_size = len(num_patches_list)
+        image_flags = torch.ones(batch_size, 1, dtype=torch.long)  # All samples have images
         
         return {
             'pixel_values': all_pixel_values,
+            'image_flags': image_flags,
             'num_patches_list': num_patches_list,
-            'patch_boundaries': patch_boundaries
         }
 
 
