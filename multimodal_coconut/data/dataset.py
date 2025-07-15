@@ -146,110 +146,34 @@ class MultimodalDataset:
         }
     
     def _create_dataset(self) -> Dataset:
-        """Create HuggingFace dataset from processed data with robust processing"""
+        """Create HuggingFace dataset from processed data - simplified version following original CoCoNuT pattern"""
         # Extract keys for dataset creation
         keys = self.data[0].keys()
         dataset_dict = {k: [d[k] for d in self.data] for k in keys}
         dataset = Dataset.from_dict(dataset_dict)
         
-        # Determine optimal number of processes
-        optimal_num_proc = min(8, max(1, len(self.data) // 100))  # More conservative
-        
-        print(f"Processing {len(self.data)} samples with {optimal_num_proc} processes...")
-        
-        # Apply tokenization with robust error handling
+        # Follow original CoCoNuT pattern: simple distributed processing
         if torch.cuda.device_count() > 1 and dist.is_initialized():
-            # Distributed processing - only rank 0 processes
             if dist.get_rank() == 0:
-                try:
-                    processed_dataset = dataset.map(
-                        self._safe_tokenize_multimodal_sample, 
-                        remove_columns=list(dataset.features), 
-                        num_proc=optimal_num_proc,
-                        desc="Tokenizing multimodal samples",
-                        load_from_cache_file=False  # Avoid cache issues
-                    )
-                    processed_dataset = [processed_dataset]
-                except Exception as e:
-                    print(f"Error in distributed processing: {e}")
-                    # Fallback to single process
-                    processed_dataset = [self._process_dataset_sequentially(dataset)]
+                processed_dataset = [dataset.map(
+                    self.tokenize_multimodal_sample, 
+                    remove_columns=list(dataset.features), 
+                    num_proc=8
+                )]
             else:
                 processed_dataset = [None]
-            
-            # Broadcast to all ranks
             dist.broadcast_object_list(processed_dataset, src=0)
             dataset = processed_dataset[0]
         else:
-            # Single machine processing
-            try:
-                dataset = dataset.map(
-                    self._safe_tokenize_multimodal_sample, 
-                    remove_columns=list(dataset.features), 
-                    num_proc=optimal_num_proc,
-                    desc="Tokenizing multimodal samples",
-                    load_from_cache_file=False
-                )
-            except Exception as e:
-                print(f"Error in parallel processing: {e}")
-                print("Falling back to sequential processing...")
-                dataset = self._process_dataset_sequentially(dataset)
+            dataset = dataset.map(
+                self.tokenize_multimodal_sample, 
+                remove_columns=list(dataset.features), 
+                num_proc=8
+            )
         
         return dataset
     
-    def _safe_tokenize_multimodal_sample(self, sample: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Safe wrapper around tokenize_multimodal_sample with timeout and error handling
-        """
-        try:
-            return self.tokenize_multimodal_sample(sample)
-        except Exception as e:
-            print(f"Error processing sample {sample.get('idx', 'unknown')}: {e}")
-            # Return a dummy sample to continue processing
-            return self._create_dummy_sample(sample.get('idx', 0))
-    
-    def _create_dummy_sample(self, idx: int) -> Dict[str, Any]:
-        """Create a dummy sample for error cases"""
-        # Create minimal dummy data using the image processor for consistency
-        dummy_pixel_values = self.image_processor._create_dummy_image()
-        dummy_question = self.tokenizer.encode("Error loading sample", add_special_tokens=True)
-        dummy_steps = [[self.tokenizer.encode("Processing error", add_special_tokens=False)]]
-        dummy_answer = self.tokenizer.encode("### Error", add_special_tokens=False) + [self.tokenizer.eos_token_id]
-        
-        return {
-            "pixel_values": dummy_pixel_values,  # Keep as tensor
-            "question_tokenized": dummy_question,
-            "steps_tokenized": dummy_steps,
-            "answer_tokenized": dummy_answer,
-            "idx": idx,
-            "num_patches": dummy_pixel_values.shape[0]
-        }
-    
-    def _process_dataset_sequentially(self, dataset: Dataset) -> Dataset:
-        """Process dataset sequentially as fallback"""
-        print("Processing samples sequentially...")
-        processed_samples = []
-        
-        for i in range(len(dataset)):
-            try:
-                sample = dataset[i]
-                processed_sample = self._safe_tokenize_multimodal_sample(sample)
-                processed_samples.append(processed_sample)
-                
-                if (i + 1) % 100 == 0:
-                    print(f"Processed {i + 1}/{len(dataset)} samples")
-                    
-            except Exception as e:
-                print(f"Error processing sample {i}: {e}")
-                processed_samples.append(self._create_dummy_sample(i))
-        
-        # Convert back to dataset
-        if processed_samples:
-            keys = processed_samples[0].keys()
-            processed_dict = {k: [sample[k] for sample in processed_samples] for k in keys}
-            return Dataset.from_dict(processed_dict)
-        else:
-            raise ValueError("No samples could be processed")
+
     
     def __len__(self) -> int:
         """Return dataset length"""
