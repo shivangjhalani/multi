@@ -327,7 +327,9 @@ class MultimodalCoconut(nn.Module):
         """
         Prepare multimodal embeddings by integrating visual features into text embeddings.
         
-        This follows InternVL3's pattern of replacing image context tokens with visual embeddings.
+        This follows InternVL3's pattern but simplified for CoCoNuT usage.
+        For CoCoNuT, we just need basic text embeddings since the continuous thought
+        mechanism works on the hidden state level, not the input embedding level.
         
         Args:
             pixel_values: Image pixel values [batch_size, num_patches, channels, height, width]
@@ -335,50 +337,11 @@ class MultimodalCoconut(nn.Module):
             image_flags: Flags indicating which samples have images [batch_size, 1]
             
         Returns:
-            inputs_embeds: Combined multimodal embeddings [batch_size, sequence_length, hidden_size]
+            inputs_embeds: Text embeddings [batch_size, sequence_length, hidden_size]
         """
-        batch_size, seq_len = input_ids.shape
-        device = input_ids.device
-        
-        # Get text embeddings
+        # For CoCoNuT, we use the language model's embeddings directly
+        # The multimodal integration happens at the base model level
         inputs_embeds = self.base_model.language_model.get_input_embeddings()(input_ids)
-        
-        # Integrate visual features if images are provided
-        if pixel_values is not None:
-            # Extract visual features using InternVL3's vision encoder
-            vit_embeds = self.base_model.extract_feature(pixel_values)
-            
-            # Handle image flags - if not provided, assume all samples have images
-            if image_flags is None:
-                image_flags = torch.ones(batch_size, 1, dtype=torch.long, device=device)
-            
-            # Filter visual embeddings for samples with images
-            if image_flags.dim() > 1:
-                image_flags = image_flags.squeeze(-1)
-            vit_embeds = vit_embeds[image_flags == 1]
-            
-            # Replace image context tokens with visual embeddings
-            B, N, C = inputs_embeds.shape
-            inputs_embeds_flat = inputs_embeds.reshape(B * N, C)
-            input_ids_flat = input_ids.reshape(B * N)
-            
-            # Find image context token positions
-            img_context_token_id = getattr(self.base_model, 'img_context_token_id', None)
-            if img_context_token_id is not None:
-                selected = (input_ids_flat == img_context_token_id)
-                if selected.sum() > 0 and len(vit_embeds) > 0:
-                    try:
-                        # Replace image context tokens with visual embeddings
-                        inputs_embeds_flat[selected] = inputs_embeds_flat[selected] * 0.0 + vit_embeds.reshape(-1, C)
-                    except Exception as e:
-                        # Handle size mismatch gracefully
-                        vit_embeds_flat = vit_embeds.reshape(-1, C)
-                        n_token = selected.sum()
-                        if n_token > 0 and len(vit_embeds_flat) > 0:
-                            inputs_embeds_flat[selected] = inputs_embeds_flat[selected] * 0.0 + vit_embeds_flat[:n_token]
-            
-            inputs_embeds = inputs_embeds_flat.reshape(B, N, C)
-        
         return inputs_embeds
     
     def _standard_multimodal_forward(self,
