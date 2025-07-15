@@ -85,7 +85,7 @@ class MultimodalCoconut(nn.Module):
         
         # Load base multimodal model
         self.base_model = AutoModel.from_pretrained(
-            config.model.base_model_path,
+            config.model_id,
             trust_remote_code=True,
             torch_dtype=torch.bfloat16
         )
@@ -93,30 +93,31 @@ class MultimodalCoconut(nn.Module):
         # Get model dimensions
         self.hidden_size = self.base_model.config.hidden_size
         
-        # Initialize latent thought module
+        # Initialize latent thought module with default values for now
+        # These will be properly configured in subsequent tasks
         self.latent_thought = LatentThoughtModule(
             hidden_size=self.hidden_size,
-            latent_size=config.model.latent_size,
-            num_latent_tokens=config.model.num_latent_tokens
+            latent_size=getattr(config, 'latent_size', 4096),
+            num_latent_tokens=getattr(config, 'num_latent_tokens', 8)
         )
         
         # Thought control mechanism
         self.thought_gate = nn.Linear(self.hidden_size, 1)
-        self.max_thought_depth = config.model.max_thought_depth
+        self.max_thought_depth = getattr(config, 'max_thought_depth', 5)
         
         # Output projection
         self.output_projection = nn.Linear(self.hidden_size, self.base_model.config.vocab_size)
         
         # Initialize tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
-            config.model.base_model_path,
+            config.model_id,
             trust_remote_code=True
         )
         
-        # Freeze components if specified
-        if config.model.freeze_vision_encoder:
+        # Freeze components if specified (using getattr for optional attributes)
+        if getattr(config, 'freeze_vision_encoder', False):
             self._freeze_vision_encoder()
-        if config.model.freeze_language_model:
+        if getattr(config, 'freeze_language_model', False):
             self._freeze_language_model()
     
     def _freeze_vision_encoder(self):
@@ -166,7 +167,7 @@ class MultimodalCoconut(nn.Module):
         
         # Apply continuous thought reasoning
         if thought_length is None:
-            thought_length = self.config.model.thought_length
+            thought_length = getattr(self.config, 'thought_length', 2)
         
         # Iterative thought processing
         current_states = hidden_states
