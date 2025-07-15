@@ -118,9 +118,11 @@ class MultimodalDataset:
         # Process image
         pixel_values = self._load_and_process_image(sample["image_path"])
         
-        # Tokenize text components following original CoCoNuT pattern
-        # Add <image> token at the beginning of question
-        question_with_image = "<image>\n" + sample["question"] + "\n"
+        # Tokenize text components following InternVL3 pattern
+        # Add proper image context tokens for InternVL3
+        num_patches = pixel_values.shape[0]
+        img_context_tokens = '<IMG_CONTEXT>' * num_patches
+        question_with_image = f"<img>{img_context_tokens}</img>\n{sample['question']}\n"
         question_tokenized = self.tokenizer.encode(
             question_with_image, add_special_tokens=True
         )

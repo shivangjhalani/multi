@@ -176,6 +176,8 @@ def create_default_config() -> Dict[str, Any]:
         "max_latent_stage": 4,
         "epochs_per_stage": 5,
         "uniform_prob": 0.1,
+        "pad_latent_to_max": False,
+        "no_cot": False,
         
         # Training parameters
         "num_epochs": 40,

@@ -16,6 +16,8 @@ c_thought: 2
 max_latent_stage: 4
 epochs_per_stage: 5
 uniform_prob: 0.1
+pad_latent_to_max: false
+no_cot: false
 
 # Training parameters
 num_epochs: 40

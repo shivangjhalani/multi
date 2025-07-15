@@ -260,13 +260,20 @@ class MultimodalCoconut(nn.Module):
                 )
                 hidden_states_offset = 0
             else:
-                # For newer transformers, we need to handle Cache objects properly
-                # We'll pass None and let the model handle caching internally
+                # Extract KV cache to reuse (exactly like original CoCoNuT)
+                past_key_values = [
+                    (
+                        k[:, :, :next_compute_range[0], :],
+                        v[:, :, :next_compute_range[0], :],
+                    )
+                    for k, v in kv_cache
+                ]
+                
                 outputs = self.base_model.language_model(
                     inputs_embeds=inputs_embeds[:, next_compute_range[0]:next_compute_range[1], :],
                     attention_mask=attention_mask[:, :next_compute_range[1]] if attention_mask is not None else None,
                     position_ids=position_ids[:, next_compute_range[0]:next_compute_range[1]] if position_ids is not None else None,
-                    past_key_values=None,  # Let the model handle caching internally
+                    past_key_values=past_key_values,
                     output_hidden_states=True,
                     use_cache=True,
                 )
@@ -329,13 +336,26 @@ class MultimodalCoconut(nn.Module):
                 for batch_idx in range(inputs_embeds.shape[0])
             ])
         
-        # Final forward pass (adapted for newer transformers)
+        # Final forward pass (exactly like original CoCoNuT)
+        if kv_cache is not None:
+            # Extract KV cache for final pass
+            past_key_values = [
+                (
+                    k[:, :, :next_compute_range[0], :],
+                    v[:, :, :next_compute_range[0], :],
+                )
+                for k, v in kv_cache
+            ]
+        else:
+            past_key_values = None
+            
         final_outputs = self.base_model.language_model(
             inputs_embeds=inputs_embeds[:, next_compute_range[0]:next_compute_range[1], :],
             attention_mask=attention_mask[:, :next_compute_range[1]] if attention_mask is not None else None,
             position_ids=position_ids[:, next_compute_range[0]:next_compute_range[1]] if position_ids is not None else None,
-            past_key_values=None,  # Let the model handle caching internally
+            past_key_values=past_key_values,
             output_hidden_states=output_hidden_states,
+            use_cache=use_cache,
         )
         
         logits.append(final_outputs.logits)
@@ -368,22 +388,60 @@ class MultimodalCoconut(nn.Module):
         """
         Prepare multimodal embeddings by integrating visual features into text embeddings.
         
-        This follows InternVL3's pattern but simplified for CoCoNuT usage.
-        For CoCoNuT, we just need basic text embeddings since the continuous thought
-        mechanism works on the hidden state level, not the input embedding level.
+        This follows InternVL3's pattern exactly - visual features replace IMG_CONTEXT tokens.
+        This is critical for multimodal CoCoNuT to work correctly.
         
         Args:
-            pixel_values: Image pixel values [batch_size, num_patches, channels, height, width]
+            pixel_values: Image pixel values [total_patches, channels, height, width]
             input_ids: Text token IDs [batch_size, sequence_length]
             image_flags: Flags indicating which samples have images [batch_size, 1]
             
         Returns:
-            inputs_embeds: Text embeddings [batch_size, sequence_length, hidden_size]
+            inputs_embeds: Multimodal embeddings [batch_size, sequence_length, hidden_size]
         """
-        # For CoCoNuT, we use the language model's embeddings directly
-        # The multimodal integration happens at the base model level
-        inputs_embeds = self.base_model.language_model.get_input_embeddings()(input_ids)
-        return inputs_embeds
+        if pixel_values is None:
+            # Text-only case
+            return self.base_model.language_model.get_input_embeddings()(input_ids)
+        
+        # Get text embeddings
+        input_embeds = self.base_model.language_model.get_input_embeddings()(input_ids).clone()
+        
+        # Extract visual features using InternVL3's vision encoder
+        vit_embeds = self.base_model.extract_feature(pixel_values)
+        
+        # Filter visual embeddings based on image flags
+        if image_flags is not None:
+            image_flags = image_flags.squeeze(-1)
+            vit_embeds = vit_embeds[image_flags == 1]
+        
+        # Replace IMG_CONTEXT tokens with visual embeddings (following InternVL3 pattern)
+        B, N, C = input_embeds.shape
+        input_embeds = input_embeds.reshape(B * N, C)
+        input_ids_flat = input_ids.reshape(B * N)
+        
+        # Find IMG_CONTEXT token positions
+        img_context_token_id = getattr(self.base_model, 'img_context_token_id', None)
+        if img_context_token_id is not None:
+            selected = (input_ids_flat == img_context_token_id)
+            if selected.sum() > 0:
+                try:
+                    vit_embeds_flat = vit_embeds.reshape(-1, C)
+                    input_embeds[selected] = input_embeds[selected] * 0.0 + vit_embeds_flat
+                except Exception as e:
+                    # Handle shape mismatch gracefully
+                    n_token = selected.sum()
+                    vit_embeds_flat = vit_embeds.reshape(-1, C)
+                    if n_token <= vit_embeds_flat.shape[0]:
+                        input_embeds[selected] = input_embeds[selected] * 0.0 + vit_embeds_flat[:n_token]
+                    else:
+                        # If we don't have enough visual tokens, repeat the last one
+                        repeated_embeds = vit_embeds_flat[-1:].repeat(n_token, 1)
+                        input_embeds[selected] = input_embeds[selected] * 0.0 + repeated_embeds
+        
+        # Reshape back to original dimensions
+        input_embeds = input_embeds.reshape(B, N, C)
+        
+        return input_embeds
     
     def _standard_multimodal_forward(self,
                                    pixel_values: torch.FloatTensor,
@@ -591,8 +649,8 @@ def create_multimodal_coconut_model(config: Config) -> Tuple[MultimodalCoconut, 
         use_fast=False
     )
     
-    # Add CoCoNuT special tokens
-    special_tokens = ["<|start-latent|>", "<|end-latent|>", "<|latent|>"]
+    # Add CoCoNuT special tokens and IMG_CONTEXT token
+    special_tokens = ["<|start-latent|>", "<|end-latent|>", "<|latent|>", "<IMG_CONTEXT>"]
     tokenizer.add_tokens(special_tokens)
     
     # Get special token IDs
@@ -622,6 +680,19 @@ def create_multimodal_coconut_model(config: Config) -> Tuple[MultimodalCoconut, 
         print(f"✓ Token embeddings resized successfully")
     else:
         print(f"✓ No resize needed: tokenizer size ({new_vocab_size}) <= model vocab size ({old_vocab_size})")
+    
+    # Set the img_context_token_id for multimodal processing
+    IMG_CONTEXT_TOKEN = '<IMG_CONTEXT>'
+    img_context_token_id = tokenizer.convert_tokens_to_ids(IMG_CONTEXT_TOKEN)
+    base_model.img_context_token_id = img_context_token_id
+    
+    # Set num_image_token for InternVL3 compatibility
+    # This is calculated as (image_size // patch_size) ** 2 * down_sample_ratio ** 2
+    # For InternVL3-1B-Pretrained: image_size=448, patch_size=14, down_sample_ratio=1
+    image_size = getattr(config, 'image_size', 448)
+    patch_size = 14  # InternVL3 default
+    down_sample_ratio = 1  # InternVL3 default
+    base_model.num_image_token = int((image_size // patch_size) ** 2 * (down_sample_ratio ** 2))
     
     # Create multimodal CoCoNuT wrapper
     model = MultimodalCoconut(
