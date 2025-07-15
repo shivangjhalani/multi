@@ -267,10 +267,20 @@ class MultimodalCoconut(nn.Module):
             for idx_pair in filling_indices:
                 batch_idx, token_idx = idx_pair
                 
-                # Replace with preceding hidden state (exactly like original)
-                tensor_list[batch_idx][token_idx] = hidden_states[
-                    batch_idx, token_idx - 1 - hidden_states_offset, :
-                ]
+                # Calculate the index for the preceding hidden state
+                hidden_idx = token_idx - 1 - hidden_states_offset
+                
+                # Ensure we don't go out of bounds
+                if hidden_idx >= 0 and hidden_idx < hidden_states.shape[1]:
+                    # Replace with preceding hidden state (exactly like original)
+                    tensor_list[batch_idx][token_idx] = hidden_states[
+                        batch_idx, hidden_idx, :
+                    ]
+                else:
+                    # If we can't access the preceding hidden state, use zero vector
+                    tensor_list[batch_idx][token_idx] = torch.zeros_like(
+                        tensor_list[batch_idx][token_idx]
+                    )
             
             # Reassemble inputs_embeds (exactly like original)
             inputs_embeds = torch.stack([
