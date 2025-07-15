@@ -179,9 +179,11 @@ def test_multimodal_collator():
         tokenizer.add_special_tokens({"additional_special_tokens": special_tokens})
         
         latent_id = tokenizer.convert_tokens_to_ids("<|latent|>")
+        start_id = tokenizer.convert_tokens_to_ids("<|start-latent|>")
+        end_id = tokenizer.convert_tokens_to_ids("<|end-latent|>")
         
-        # Create dataset
-        dataset = get_multimodal_dataset(
+        # Create base dataset
+        base_dataset = get_multimodal_dataset(
             data_path=data_path,
             tokenizer=tokenizer,
             image_size=224,
@@ -189,11 +191,36 @@ def test_multimodal_collator():
             max_size=3
         )
         
+        # Import the CoCoNuT dataset functions
+        from multimodal_coconut.data.dataset import get_multimodal_cot_latent_dataset
+        
+        # Create a simple config object for testing
+        class TestConfig:
+            uniform_prob = 0.0
+            max_latent_stage = 2
+            pad_latent_to_max = False
+            c_thought = 1
+            no_cot = False
+        
+        config = TestConfig()
+        
+        # Convert to training format with latent tokens
+        training_dataset = get_multimodal_cot_latent_dataset(
+            scheduled_stage=1,
+            base_dataset=base_dataset,
+            configs=config,
+            start_id=start_id,
+            latent_id=latent_id,
+            end_id=end_id,
+            no_special_marker=False,
+            shuffle=False
+        )
+        
         # Create collator
         collator = MultimodalCollator(tokenizer=tokenizer, latent_id=latent_id)
         
-        # Test collation
-        batch = collator([dataset[i] for i in range(min(2, len(dataset)))])
+        # Test collation with training samples
+        batch = collator([training_dataset[i] for i in range(min(2, len(training_dataset)))])
         
         print(f"  ✓ Batch created successfully")
         print(f"  ✓ Batch keys: {list(batch.keys())}")
@@ -205,6 +232,8 @@ def test_multimodal_collator():
         
     except Exception as e:
         print(f"  ✗ Collator test failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
