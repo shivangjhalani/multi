@@ -211,10 +211,10 @@ class MultimodalCoconut(nn.Module):
         
         This is a direct adaptation of the original CoCoNuT algorithm for multimodal inputs:
         1. Prepare multimodal embeddings (visual + textual)
-        2. Group latent tokens by batch (exactly like original)
-        3. Iterative forward passes with KV cache (exactly like original)
-        4. Continuous thought feedback (exactly like original)
-        5. Concatenate logits and compute loss (exactly like original)
+        2. Group latent tokens by batch 
+        3. Iterative forward passes with KV cache 
+        4. Continuous thought feedback 
+        5. Concatenate logits and compute loss 
         
         Args:
             pixel_values: Image pixel values
@@ -230,7 +230,7 @@ class MultimodalCoconut(nn.Module):
         # Prepare multimodal embeddings (replaces self.embedding(input_ids) from original)
         inputs_embeds = self._prepare_multimodal_embeddings(pixel_values, input_ids, image_flags)
         
-        # Group latent tokens by batch (exactly like original CoCoNuT)
+        # Group latent tokens by batch 
         latent_lists = [
             [idx[1].item() for idx in latent_indices if idx[0] == i]
             for i in range(batch_size)
@@ -238,7 +238,7 @@ class MultimodalCoconut(nn.Module):
         
         max_n_latents = max([len(l) for l in latent_lists]) if latent_lists else 0
         
-        # Set up compute range (exactly like original CoCoNuT)
+        # Set up compute range 
         next_compute_range = (0, seq_len)
         if max_n_latents > 0:
             next_compute_range = (0, latent_indices[:, 1].min().item())
@@ -246,11 +246,11 @@ class MultimodalCoconut(nn.Module):
         logits = []
         kv_cache = past_key_values
         
-        # Iterative forward passes (exactly like original CoCoNuT)
+        # Iterative forward passes 
         for pass_idx in range(max_n_latents):
             
             if kv_cache is None:
-                # First forward pass (exactly like original)
+                # First forward pass 
                 outputs = self.base_model.language_model(
                     inputs_embeds=inputs_embeds[:, next_compute_range[0]:next_compute_range[1], :],
                     attention_mask=attention_mask[:, next_compute_range[0]:next_compute_range[1]] if attention_mask is not None else None,
@@ -260,7 +260,7 @@ class MultimodalCoconut(nn.Module):
                 )
                 hidden_states_offset = 0
             else:
-                # Extract KV cache to reuse (exactly like original CoCoNuT)
+                # Extract KV cache to reuse 
                 past_key_values = [
                     (
                         k[:, :, :next_compute_range[0], :],
@@ -281,7 +281,7 @@ class MultimodalCoconut(nn.Module):
             
             logits.append(outputs.logits)
             
-            # Update compute range (exactly like original)
+            # Update compute range 
             next_compute_range = (
                 next_compute_range[1],
                 (
@@ -291,18 +291,18 @@ class MultimodalCoconut(nn.Module):
                 ),
             )
             
-            # Extract hidden states (exactly like original)
+            # Extract hidden states 
             hidden_states = outputs.hidden_states[-1]  # Get the last layer hidden states
             kv_cache = outputs.past_key_values
             
-            # Continuous thought feedback (exactly like original CoCoNuT)
+            # Continuous thought feedback 
             filling_indices = [
                 (instance_idx, mask_list[pass_idx])
                 for instance_idx, mask_list in enumerate(latent_lists)
                 if len(mask_list) > pass_idx
             ]
             
-            # Break down inputs_embeds to avoid in-place operations (exactly like original)
+            # Break down inputs_embeds to avoid in-place operations 
             tensor_list = [
                 [
                     inputs_embeds[batch_idx, pos, :]
@@ -311,7 +311,7 @@ class MultimodalCoconut(nn.Module):
                 for batch_idx in range(inputs_embeds.shape[0])
             ]
             
-            # Replace latent tokens with continuous thoughts (exactly like original)
+            # Replace latent tokens with continuous thoughts 
             for idx_pair in filling_indices:
                 batch_idx, token_idx = idx_pair
                 
@@ -320,7 +320,7 @@ class MultimodalCoconut(nn.Module):
                 
                 # Ensure we don't go out of bounds
                 if hidden_idx >= 0 and hidden_idx < hidden_states.shape[1]:
-                    # Replace with preceding hidden state (exactly like original)
+                    # Replace with preceding hidden state 
                     tensor_list[batch_idx][token_idx] = hidden_states[
                         batch_idx, hidden_idx, :
                     ]
@@ -330,13 +330,13 @@ class MultimodalCoconut(nn.Module):
                         tensor_list[batch_idx][token_idx]
                     )
             
-            # Reassemble inputs_embeds (exactly like original)
+            # Reassemble inputs_embeds 
             inputs_embeds = torch.stack([
                 torch.stack(tensor_list[batch_idx])
                 for batch_idx in range(inputs_embeds.shape[0])
             ])
         
-        # Final forward pass (exactly like original CoCoNuT)
+        # Final forward pass 
         if kv_cache is not None:
             # Extract KV cache for final pass
             past_key_values = [
@@ -360,7 +360,7 @@ class MultimodalCoconut(nn.Module):
         
         logits.append(final_outputs.logits)
         
-        # Concatenate logits and compute loss (exactly like original CoCoNuT)
+        # Concatenate logits and compute loss 
         logits = torch.cat(logits, dim=-2)
         
         loss = None
@@ -649,8 +649,8 @@ def create_multimodal_coconut_model(config: Config) -> Tuple[MultimodalCoconut, 
         use_fast=False
     )
     
-    # Add CoCoNuT special tokens and IMG_CONTEXT token
-    special_tokens = ["<|start-latent|>", "<|end-latent|>", "<|latent|>", "<IMG_CONTEXT>"]
+    # Add CoCoNuT special tokens
+    special_tokens = ["<|start-latent|>", "<|end-latent|>", "<|latent|>"]
     tokenizer.add_tokens(special_tokens)
     
     # Get special token IDs
@@ -682,6 +682,7 @@ def create_multimodal_coconut_model(config: Config) -> Tuple[MultimodalCoconut, 
         print(f"✓ No resize needed: tokenizer size ({new_vocab_size}) <= model vocab size ({old_vocab_size})")
     
     # Set the img_context_token_id for multimodal processing
+    # IMG_CONTEXT is already in the tokenizer by default
     IMG_CONTEXT_TOKEN = '<IMG_CONTEXT>'
     img_context_token_id = tokenizer.convert_tokens_to_ids(IMG_CONTEXT_TOKEN)
     base_model.img_context_token_id = img_context_token_id

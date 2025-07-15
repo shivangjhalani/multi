@@ -24,7 +24,7 @@ This document summarizes the critical issues found and fixed in the multimodal C
 
 **Fix**: Restored the exact original CoCoNuT KV cache pattern:
 ```python
-# Extract KV cache to reuse (exactly like original CoCoNuT)
+# Extract KV cache to reuse 
 past_key_values = [
     (
         k[:, :, :next_compute_range[0], :],
