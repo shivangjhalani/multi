@@ -166,38 +166,30 @@ class MultimodalCoconut(nn.Module):
                                 return_dict: Optional[bool] = None,
                                 **kwargs) -> CausalLMOutputWithPast:
         """
-        Core multimodal CoCoNuT forward pass with iterative processing.
+        Core multimodal CoCoNuT forward pass following the exact original pattern.
         
-        This implements the multi-pass algorithm following the original CoCoNuT pattern:
-        1. Process multimodal inputs (images + text) to get initial embeddings
-        2. Group latent tokens by batch and position (following original CoCoNuT)
-        3. Perform iterative forward passes with continuous thought feedback
-        4. Use KV cache for efficiency across passes
-        5. Concatenate all logits and compute final loss
-        
-        Key differences from original CoCoNuT:
-        - Handles multimodal inputs (pixel_values + input_ids)
-        - Integrates visual features into text embeddings
-        - Maintains InternVL3's multimodal attention mechanisms
+        This is a direct adaptation of the original CoCoNuT algorithm for multimodal inputs:
+        1. Prepare multimodal embeddings (visual + textual)
+        2. Group latent tokens by batch (exactly like original)
+        3. Iterative forward passes with KV cache (exactly like original)
+        4. Continuous thought feedback (exactly like original)
+        5. Concatenate logits and compute loss (exactly like original)
         
         Args:
             pixel_values: Image pixel values
-            input_ids: Text token IDs
+            input_ids: Text token IDs  
             latent_indices: Positions of latent tokens [num_latent_tokens, 2]
-            ... (other args same as forward)
+            ... (other standard forward args)
             
         Returns:
-            CausalLMOutputWithPast with processed multimodal outputs
+            CausalLMOutputWithPast with multimodal CoCoNuT outputs
         """
         batch_size, seq_len = input_ids.shape
-        device = input_ids.device
         
-        # Step 1: Get initial embeddings and integrate multimodal features
-        inputs_embeds = self._prepare_multimodal_embeddings(
-            pixel_values, input_ids, image_flags
-        )
+        # Prepare multimodal embeddings (replaces self.embedding(input_ids) from original)
+        inputs_embeds = self._prepare_multimodal_embeddings(pixel_values, input_ids, image_flags)
         
-        # Step 2: Group latent tokens by batch (following original CoCoNuT pattern)
+        # Group latent tokens by batch (exactly like original CoCoNuT)
         latent_lists = [
             [idx[1].item() for idx in latent_indices if idx[0] == i]
             for i in range(batch_size)
@@ -205,36 +197,32 @@ class MultimodalCoconut(nn.Module):
         
         max_n_latents = max([len(l) for l in latent_lists]) if latent_lists else 0
         
-        if max_n_latents == 0:
-            # No latent tokens - use standard forward pass
-            return self._standard_multimodal_forward(
-                inputs_embeds, attention_mask, position_ids, past_key_values,
-                labels, use_cache, output_attentions, output_hidden_states, return_dict
-            )
+        # Set up compute range (exactly like original CoCoNuT)
+        next_compute_range = (0, seq_len)
+        if max_n_latents > 0:
+            next_compute_range = (0, latent_indices[:, 1].min().item())
         
-        # Step 3: Iterative forward passes following original CoCoNuT algorithm
         logits = []
-        next_compute_range = (0, latent_indices[:, 1].min().item())  # before earliest latent token
         kv_cache = past_key_values
         
+        # Iterative forward passes (exactly like original CoCoNuT)
         for pass_idx in range(max_n_latents):
-            # Forward pass for current segment
+            
             if kv_cache is None:
-                # First forward pass
+                # First forward pass (exactly like original)
                 outputs = self.base_model.language_model(
                     inputs_embeds=inputs_embeds[:, next_compute_range[0]:next_compute_range[1], :],
                     attention_mask=attention_mask[:, next_compute_range[0]:next_compute_range[1]] if attention_mask is not None else None,
                     position_ids=position_ids[:, next_compute_range[0]:next_compute_range[1]] if position_ids is not None else None,
                     output_hidden_states=True,
-                    return_dict=True
                 )
                 hidden_states_offset = 0
             else:
-                # Extract KV cache to reuse (following original CoCoNuT pattern)
+                # Extract KV cache to reuse (exactly like original)
                 past_key_values_truncated = [
                     (
                         k[:, :, :next_compute_range[0], :],
-                        v[:, :, :next_compute_range[0], :]
+                        v[:, :, :next_compute_range[0], :],
                     )
                     for k, v in kv_cache
                 ]
@@ -245,34 +233,33 @@ class MultimodalCoconut(nn.Module):
                     position_ids=position_ids[:, next_compute_range[0]:next_compute_range[1]] if position_ids is not None else None,
                     past_key_values=past_key_values_truncated,
                     output_hidden_states=True,
-                    return_dict=True
                 )
                 hidden_states_offset = next_compute_range[0]
             
             logits.append(outputs.logits)
             
-            # Update compute range for next iteration
+            # Update compute range (exactly like original)
             next_compute_range = (
                 next_compute_range[1],
                 (
                     seq_len
                     if pass_idx + 1 >= max_n_latents
                     else next_compute_range[1] + 1
-                )
+                ),
             )
             
-            # Extract hidden states for continuous thought feedback
-            hidden_states = outputs.last_hidden_state  # [batch_size, seq_len, hidden_size]
+            # Extract hidden states (exactly like original)
+            hidden_states = outputs.hidden_states[-1]  # Get the last layer hidden states
             kv_cache = outputs.past_key_values
             
-            # Step 4: Apply continuous thought feedback (following original CoCoNuT)
+            # Continuous thought feedback (exactly like original CoCoNuT)
             filling_indices = [
                 (instance_idx, mask_list[pass_idx])
                 for instance_idx, mask_list in enumerate(latent_lists)
                 if len(mask_list) > pass_idx
             ]
             
-            # Break down inputs_embeds to avoid in-place operations (original CoCoNuT pattern)
+            # Break down inputs_embeds to avoid in-place operations (exactly like original)
             tensor_list = [
                 [
                     inputs_embeds[batch_idx, pos, :]
@@ -281,22 +268,22 @@ class MultimodalCoconut(nn.Module):
                 for batch_idx in range(inputs_embeds.shape[0])
             ]
             
-            # Replace latent token embeddings with continuous thoughts
+            # Replace latent tokens with continuous thoughts (exactly like original)
             for idx_pair in filling_indices:
                 batch_idx, token_idx = idx_pair
                 
-                # Replace with preceding hidden state (continuous thought feedback)
+                # Replace with preceding hidden state (exactly like original)
                 tensor_list[batch_idx][token_idx] = hidden_states[
                     batch_idx, token_idx - 1 - hidden_states_offset, :
                 ]
             
-            # Reassemble inputs_embeds
+            # Reassemble inputs_embeds (exactly like original)
             inputs_embeds = torch.stack([
                 torch.stack(tensor_list[batch_idx])
                 for batch_idx in range(inputs_embeds.shape[0])
             ])
         
-        # Step 5: Final forward pass for remaining sequence
+        # Final forward pass (exactly like original CoCoNuT)
         final_outputs = self.base_model.language_model(
             inputs_embeds=inputs_embeds[:, next_compute_range[0]:next_compute_range[1], :],
             attention_mask=attention_mask[:, :next_compute_range[1]] if attention_mask is not None else None,
@@ -305,7 +292,7 @@ class MultimodalCoconut(nn.Module):
                 [
                     (
                         k[:, :, :next_compute_range[0], :],
-                        v[:, :, :next_compute_range[0], :]
+                        v[:, :, :next_compute_range[0], :],
                     )
                     for k, v in kv_cache
                 ]
@@ -313,14 +300,12 @@ class MultimodalCoconut(nn.Module):
                 else None
             ),
             output_hidden_states=output_hidden_states,
-            output_attentions=output_attentions,
-            return_dict=True
         )
         
         logits.append(final_outputs.logits)
         
-        # Step 6: Concatenate all logits and compute loss (following original CoCoNuT)
-        logits = torch.cat(logits, dim=-2)  # Concatenate along sequence dimension
+        # Concatenate logits and compute loss (exactly like original CoCoNuT)
+        logits = torch.cat(logits, dim=-2)
         
         loss = None
         if labels is not None:

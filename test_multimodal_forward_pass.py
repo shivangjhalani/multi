@@ -290,8 +290,13 @@ def test_multimodal_embeddings_preparation():
     """Test multimodal embeddings preparation"""
     print("Testing multimodal embeddings preparation...")
     
-    # Create mock model
+    # Create mock inputs first to determine device
+    inputs = create_mock_multimodal_inputs(batch_size=2, seq_len=10, num_latents=1)
+    device = inputs['input_ids'].device
+    
+    # Create mock model on the same device
     base_model = MockInternVL3Model()
+    base_model = base_model.to(device)
     model = MultimodalCoconut(
         base_model=base_model,
         latent_token_id=50000,
@@ -299,9 +304,7 @@ def test_multimodal_embeddings_preparation():
         end_latent_id=50002,
         eos_token_id=2
     )
-    
-    # Create mock inputs
-    inputs = create_mock_multimodal_inputs(batch_size=2, seq_len=10, num_latents=1)
+    model = model.to(device)
     
     # Test embeddings preparation
     embeddings = model._prepare_multimodal_embeddings(
@@ -326,8 +329,13 @@ def test_continuous_thought_feedback():
     """Test continuous thought feedback mechanism"""
     print("Testing continuous thought feedback mechanism...")
     
-    # Create mock model
+    # Create mock inputs first to determine device
+    inputs = create_mock_multimodal_inputs(batch_size=1, seq_len=10, num_latents=2)
+    device = inputs['input_ids'].device
+    
+    # Create mock model on the same device
     base_model = MockInternVL3Model()
+    base_model = base_model.to(device)
     model = MultimodalCoconut(
         base_model=base_model,
         latent_token_id=50000,
@@ -335,9 +343,7 @@ def test_continuous_thought_feedback():
         end_latent_id=50002,
         eos_token_id=2
     )
-    
-    # Create mock inputs with latent tokens
-    inputs = create_mock_multimodal_inputs(batch_size=1, seq_len=10, num_latents=2)
+    model = model.to(device)
     
     try:
         # Test forward pass with latent tokens
@@ -377,8 +383,13 @@ def test_kv_cache_efficiency():
     """Test KV cache handling for multimodal inputs"""
     print("Testing KV cache efficiency...")
     
-    # Create mock model
+    # Create mock inputs first to determine device
+    inputs = create_mock_multimodal_inputs(batch_size=1, seq_len=8, num_latents=1)
+    device = inputs['input_ids'].device
+    
+    # Create mock model on the same device
     base_model = MockInternVL3Model()
+    base_model = base_model.to(device)
     model = MultimodalCoconut(
         base_model=base_model,
         latent_token_id=50000,
@@ -386,9 +397,7 @@ def test_kv_cache_efficiency():
         end_latent_id=50002,
         eos_token_id=2
     )
-    
-    # Create mock inputs
-    inputs = create_mock_multimodal_inputs(batch_size=1, seq_len=8, num_latents=1)
+    model = model.to(device)
     
     try:
         # Test forward pass with use_cache=True
@@ -426,8 +435,17 @@ def test_no_latent_tokens():
     """Test standard forward pass without latent tokens"""
     print("Testing standard forward pass without latent tokens...")
     
-    # Create mock model
+    # Create inputs without latent tokens first to determine device
+    inputs = create_mock_multimodal_inputs(batch_size=1, seq_len=8, num_latents=0)
+    device = inputs['input_ids'].device
+    
+    # Ensure no latent tokens
+    inputs['input_ids'] = torch.randint(1000, 2000, inputs['input_ids'].shape, device=device)
+    inputs['labels'] = inputs['input_ids'].clone()
+    
+    # Create mock model on the same device
     base_model = MockInternVL3Model()
+    base_model = base_model.to(device)
     model = MultimodalCoconut(
         base_model=base_model,
         latent_token_id=50000,
@@ -435,12 +453,7 @@ def test_no_latent_tokens():
         end_latent_id=50002,
         eos_token_id=2
     )
-    
-    # Create inputs without latent tokens
-    inputs = create_mock_multimodal_inputs(batch_size=1, seq_len=8, num_latents=0)
-    # Ensure no latent tokens
-    inputs['input_ids'] = torch.randint(1000, 2000, inputs['input_ids'].shape, device=inputs['input_ids'].device)
-    inputs['labels'] = inputs['input_ids'].clone()
+    model = model.to(device)
     
     try:
         # Test forward pass without latent tokens
