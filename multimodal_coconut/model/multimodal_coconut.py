@@ -62,8 +62,13 @@ class MultimodalCoconut(nn.Module):
         self.end_latent_id = end_latent_id
         self.eos_token_id = eos_token_id
         
-        # Get model configuration
-        self.config = base_model.config
+        # Get model configuration (handle cases where config might not exist)
+        if hasattr(base_model, 'config'):
+            self.config = base_model.config
+        else:
+            # Create a minimal config for testing scenarios
+            from types import SimpleNamespace
+            self.config = SimpleNamespace(use_return_dict=True)
         
         # Determine hidden size from the language model component
         self.hidden_size = self._determine_hidden_size(base_model)
