@@ -7,7 +7,6 @@
 import json
 import itertools
 import random
-import os
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any, Union
 from pathlib import Path
@@ -17,83 +16,9 @@ import torch.distributed as dist
 from datasets import Dataset
 from transformers import PreTrainedTokenizerBase
 from transformers.data.data_collator import pad_without_fast_tokenizer_warning
-from PIL import Image
-import numpy as np
-import torchvision.transforms as T
-from torchvision.transforms.functional import InterpolationMode
 
-# InternVL3 image preprocessing constants
-IMAGENET_MEAN = (0.485, 0.456, 0.406)
-IMAGENET_STD = (0.229, 0.224, 0.225)
-
-
-def build_transform(input_size):
-    """Build image transformation pipeline following InternVL3 preprocessing"""
-    MEAN, STD = IMAGENET_MEAN, IMAGENET_STD
-    transform = T.Compose([
-        T.Lambda(lambda img: img.convert('RGB') if img.mode != 'RGB' else img),
-        T.Resize((input_size, input_size), interpolation=InterpolationMode.BICUBIC),
-        T.ToTensor(),
-        T.Normalize(mean=MEAN, std=STD)
-    ])
-    return transform
-
-
-def find_closest_aspect_ratio(aspect_ratio, target_ratios, width, height, image_size):
-    """Find the closest aspect ratio for dynamic preprocessing"""
-    best_ratio_diff = float('inf')
-    best_ratio = (1, 1)
-    area = width * height
-    for ratio in target_ratios:
-        target_aspect_ratio = ratio[0] / ratio[1]
-        ratio_diff = abs(aspect_ratio - target_aspect_ratio)
-        if ratio_diff < best_ratio_diff:
-            best_ratio_diff = ratio_diff
-            best_ratio = ratio
-        elif ratio_diff == best_ratio_diff:
-            if area > 0.5 * image_size * image_size * ratio[0] * ratio[1]:
-                best_ratio = ratio
-    return best_ratio
-
-
-def dynamic_preprocess(image, min_num=1, max_num=12, image_size=448, use_thumbnail=False):
-    """Dynamic image preprocessing following InternVL3 approach"""
-    orig_width, orig_height = image.size
-    aspect_ratio = orig_width / orig_height
-
-    # Calculate the existing image aspect ratio
-    target_ratios = set(
-        (i, j) for n in range(min_num, max_num + 1) for i in range(1, n + 1) for j in range(1, n + 1) if
-        i * j <= max_num and i * j >= min_num)
-    target_ratios = sorted(target_ratios, key=lambda x: x[0] * x[1])
-
-    # Find the closest aspect ratio to the target
-    target_aspect_ratio = find_closest_aspect_ratio(
-        aspect_ratio, target_ratios, orig_width, orig_height, image_size)
-
-    # Calculate the target width and height
-    target_width = image_size * target_aspect_ratio[0]
-    target_height = image_size * target_aspect_ratio[1]
-    blocks = target_aspect_ratio[0] * target_aspect_ratio[1]
-
-    # Resize the image
-    resized_img = image.resize((target_width, target_height))
-    processed_images = []
-    for i in range(blocks):
-        box = (
-            (i % (target_width // image_size)) * image_size,
-            (i // (target_width // image_size)) * image_size,
-            ((i % (target_width // image_size)) + 1) * image_size,
-            ((i // (target_width // image_size)) + 1) * image_size
-        )
-        # Split the image
-        split_img = resized_img.crop(box)
-        processed_images.append(split_img)
-    assert len(processed_images) == blocks
-    if use_thumbnail and len(processed_images) != 1:
-        thumbnail_img = image.resize((image_size, image_size))
-        processed_images.append(thumbnail_img)
-    return processed_images
+# Import image processing functions from dedicated module
+from .image_processor import ImageProcessor
 
 
 class MultimodalDataset:
@@ -135,7 +60,13 @@ class MultimodalDataset:
         self.image_size = image_size
         self.max_num_patches = max_num_patches
         self.use_thumbnail = use_thumbnail
-        self.transform = build_transform(image_size)
+        
+        # Create dedicated image processor
+        self.image_processor = ImageProcessor(
+            image_size=image_size,
+            max_num_patches=max_num_patches,
+            use_thumbnail=use_thumbnail
+        )
         
         # Load and process data
         self.data = self._load_data(data_path, max_size)
@@ -154,41 +85,17 @@ class MultimodalDataset:
         
         return data
     
-    def _validate_image_path(self, image_path: str) -> str:
-        """Validate and resolve image path"""
-        if os.path.isabs(image_path):
-            full_path = image_path
-        elif self.image_root:
-            full_path = str(self.image_root / image_path)
-        else:
-            full_path = image_path
-            
-        if not os.path.exists(full_path):
-            raise FileNotFoundError(f"Image not found: {full_path}")
-            
-        return full_path
+
     
     def _load_and_process_image(self, image_path: str) -> torch.Tensor:
-        """Load and preprocess image following InternVL3 approach"""
+        """Load and preprocess image using the dedicated ImageProcessor"""
         try:
-            # Validate image path
-            full_path = self._validate_image_path(image_path)
-            
-            # Load image
-            image = Image.open(full_path).convert('RGB')
-            
-            # Dynamic preprocessing
-            images = dynamic_preprocess(
-                image, 
-                image_size=self.image_size, 
-                use_thumbnail=self.use_thumbnail, 
-                max_num=self.max_num_patches
+            # Use the dedicated image processor
+            pixel_values = self.image_processor.load_image(
+                image_path, 
+                image_root=str(self.image_root) if self.image_root else None,
+                return_dummy_on_error=True
             )
-            
-            # Apply transforms
-            pixel_values = [self.transform(img) for img in images]
-            pixel_values = torch.stack(pixel_values)
-            
             return pixel_values
             
         except Exception as e:
@@ -303,19 +210,19 @@ class MultimodalDataset:
     
     def _create_dummy_sample(self, idx: int) -> Dict[str, Any]:
         """Create a dummy sample for error cases"""
-        # Create minimal dummy data
-        dummy_pixel_values = torch.zeros(1, 3, self.image_size, self.image_size)
+        # Create minimal dummy data using the image processor for consistency
+        dummy_pixel_values = self.image_processor._create_dummy_image()
         dummy_question = self.tokenizer.encode("Error loading sample", add_special_tokens=True)
         dummy_steps = [[self.tokenizer.encode("Processing error", add_special_tokens=False)]]
         dummy_answer = self.tokenizer.encode("### Error", add_special_tokens=False) + [self.tokenizer.eos_token_id]
         
         return {
-            "pixel_values": dummy_pixel_values,
+            "pixel_values": dummy_pixel_values.tolist(),  # Convert to list for HF datasets
             "question_tokenized": dummy_question,
             "steps_tokenized": dummy_steps,
             "answer_tokenized": dummy_answer,
             "idx": idx,
-            "num_patches": 1
+            "num_patches": dummy_pixel_values.shape[0]
         }
     
     def _process_dataset_sequentially(self, dataset: Dataset) -> Dataset:
@@ -700,32 +607,81 @@ def get_multimodal_cot_latent_dataset(
             "position_ids": list(range(len(tokens))),
         }
 
-    # Apply processing with distributed support
+    # Apply processing with distributed support using robust approach
+    optimal_num_proc = min(8, max(1, len(base_dataset) // 100))
+    
     if torch.cuda.device_count() > 1 and dist.is_initialized():
         if dist.get_rank() == 0:
-            processed_dataset = base_dataset.map(
-                process_multimodal_dataset, 
-                remove_columns=list(base_dataset.features), 
-                num_proc=32
-            )
-            if shuffle:
-                processed_dataset = processed_dataset.shuffle()
-            processed_dataset = [processed_dataset]
+            try:
+                processed_dataset = base_dataset.map(
+                    process_multimodal_dataset, 
+                    remove_columns=list(base_dataset.features), 
+                    num_proc=optimal_num_proc,
+                    desc="Processing multimodal CoT dataset",
+                    load_from_cache_file=False
+                )
+                if shuffle:
+                    processed_dataset = processed_dataset.shuffle()
+                processed_dataset = [processed_dataset]
+            except Exception as e:
+                print(f"Error in distributed CoT processing: {e}")
+                print("Falling back to sequential processing...")
+                processed_dataset = [_process_cot_sequentially(base_dataset, process_multimodal_dataset, shuffle)]
         else:
             processed_dataset = [None]
         dist.broadcast_object_list(processed_dataset, src=0)
         dataset = processed_dataset[0]
     else:
-        processed_dataset = base_dataset.map(
-            process_multimodal_dataset, 
-            remove_columns=list(base_dataset.features), 
-            num_proc=32
-        )
-        if shuffle:
-            processed_dataset = processed_dataset.shuffle()
-        dataset = processed_dataset
+        try:
+            processed_dataset = base_dataset.map(
+                process_multimodal_dataset, 
+                remove_columns=list(base_dataset.features), 
+                num_proc=optimal_num_proc,
+                desc="Processing multimodal CoT dataset",
+                load_from_cache_file=False
+            )
+            if shuffle:
+                processed_dataset = processed_dataset.shuffle()
+            dataset = processed_dataset
+        except Exception as e:
+            print(f"Error in parallel CoT processing: {e}")
+            print("Falling back to sequential processing...")
+            dataset = _process_cot_sequentially(base_dataset, process_multimodal_dataset, shuffle)
 
     return dataset
+
+
+def _process_cot_sequentially(base_dataset: Dataset, process_func, shuffle: bool = False) -> Dataset:
+    """Sequential processing fallback for CoT dataset processing"""
+    print("Processing CoT dataset sequentially...")
+    processed_samples = []
+    
+    for i in range(len(base_dataset)):
+        try:
+            sample = base_dataset[i]
+            processed_sample = process_func(sample)
+            processed_samples.append(processed_sample)
+            
+            if (i + 1) % 100 == 0:
+                print(f"Processed {i + 1}/{len(base_dataset)} samples")
+                
+        except Exception as e:
+            print(f"Error processing CoT sample {i}: {e}")
+            # Skip this sample or create a dummy one
+            continue
+    
+    # Convert back to dataset
+    if processed_samples:
+        keys = processed_samples[0].keys()
+        processed_dict = {k: [sample[k] for sample in processed_samples] for k in keys}
+        dataset = Dataset.from_dict(processed_dict)
+        
+        if shuffle:
+            dataset = dataset.shuffle()
+            
+        return dataset
+    else:
+        raise ValueError("No CoT samples could be processed")
 
 
 def get_multimodal_question_latent_dataset(
@@ -783,8 +739,13 @@ def get_multimodal_question_latent_dataset(
             "position_ids": list(range(len(tokens))),
         }
 
+    # Use robust processing approach
+    optimal_num_proc = min(8, max(1, len(base_dataset_valid) // 100))
+    
     return base_dataset_valid.map(
         process_multimodal_validation_dataset, 
         remove_columns=list(base_dataset_valid.features), 
-        num_proc=32
+        num_proc=optimal_num_proc,
+        desc="Processing multimodal validation dataset",
+        load_from_cache_file=False
     )
