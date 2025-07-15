@@ -81,7 +81,8 @@ def test_utilities():
     print("\nTesting utilities...")
     
     try:
-        from multimodal_coconut.utils import set_seed, get_device, format_time
+        from multimodal_coconut.utils import set_seed, get_device
+        from multimodal_coconut.utils.misc import format_time
         
         # Test seed setting
         set_seed(42)
