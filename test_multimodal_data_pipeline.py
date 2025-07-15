@@ -20,6 +20,7 @@ from transformers import AutoTokenizer
 # Import our modules
 from multimodal_coconut.data.dataset import MultimodalDataset, MultimodalCollator, get_multimodal_dataset
 from multimodal_coconut.data.image_processor import ImageProcessor, create_image_processor
+from multimodal_coconut.data.dataset_utils import RobustDatasetProcessor, validate_dataset_sample, estimate_memory_usage
 
 
 def create_test_data():
