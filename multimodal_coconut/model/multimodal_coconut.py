@@ -453,8 +453,16 @@ def create_multimodal_coconut_model(config: Config) -> Tuple[MultimodalCoconut, 
         use_flash_attn=getattr(config, 'use_flash_attn', True)
     )
     
-    # Resize token embeddings to accommodate new tokens
-    base_model.resize_token_embeddings(len(tokenizer))
+    # Resize token embeddings to accommodate new CoCoNuT tokens
+    old_vocab_size = base_model.language_model.config.vocab_size
+    new_vocab_size = len(tokenizer)
+    
+    if new_vocab_size > old_vocab_size:
+        print(f"Resizing token embeddings from {old_vocab_size} to {new_vocab_size}...")
+        base_model.language_model.resize_token_embeddings(new_vocab_size)
+        print(f"✓ Token embeddings resized successfully")
+    else:
+        print(f"✓ No resize needed: tokenizer size ({new_vocab_size}) <= model vocab size ({old_vocab_size})")
     
     # Create multimodal CoCoNuT wrapper
     model = MultimodalCoconut(
@@ -480,6 +488,6 @@ def create_multimodal_coconut_model(config: Config) -> Tuple[MultimodalCoconut, 
         
         print("Checkpoint loaded successfully")
     
-    print(f"Model created with {sum(p.numel() for p in model.parameters())} parameters")
+    print(f"Model created with {sum(p.numel() for p in model.parameters()):,} parameters")
     
     return model, tokenizer
