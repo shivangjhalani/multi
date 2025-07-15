@@ -230,7 +230,7 @@ class MultimodalDataset:
         ) + [self.tokenizer.eos_token_id]
         
         return {
-            "pixel_values": pixel_values,
+            "pixel_values": pixel_values.tolist(),  # Convert to list for HF datasets
             "question_tokenized": question_tokenized,
             "steps_tokenized": steps_tokenized,
             "answer_tokenized": answer_tokenized,
@@ -564,21 +564,29 @@ class MultimodalCollator:
         return batch
     
     def _collate_multimodal_features(self, 
-                                   pixel_values_list: List[torch.Tensor], 
+                                   pixel_values_list: List[Union[torch.Tensor, List]], 
                                    num_patches_list: List[int]) -> Dict[str, torch.Tensor]:
         """
         Collate multimodal features (images) into batch tensors
         
         Args:
-            pixel_values_list: List of image tensors [num_patches, 3, H, W]
+            pixel_values_list: List of image tensors or lists [num_patches, 3, H, W]
             num_patches_list: List of patch counts for each image
             
         Returns:
             Dictionary with batched multimodal tensors
         """
+        # Convert lists back to tensors if needed (HF datasets serialization issue)
+        tensor_list = []
+        for pixel_values in pixel_values_list:
+            if isinstance(pixel_values, list):
+                # Convert list back to tensor
+                pixel_values = torch.tensor(pixel_values, dtype=torch.float32)
+            tensor_list.append(pixel_values)
+        
         # Handle variable number of patches by concatenating all patches
         # and keeping track of patch boundaries
-        all_pixel_values = torch.cat(pixel_values_list, dim=0)  # [total_patches, 3, H, W]
+        all_pixel_values = torch.cat(tensor_list, dim=0)  # [total_patches, 3, H, W]
         
         # Create patch boundaries for splitting during forward pass
         patch_boundaries = []

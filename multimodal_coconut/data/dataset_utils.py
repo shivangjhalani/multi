@@ -273,6 +273,13 @@ def validate_dataset_sample(sample: Dict[str, Any]) -> bool:
     # Validate tensor shapes
     try:
         pixel_values = sample['pixel_values']
+        
+        # Handle both tensor and list formats (HF datasets converts tensors to lists)
+        if isinstance(pixel_values, list):
+            # Convert to tensor for validation
+            import torch
+            pixel_values = torch.tensor(pixel_values, dtype=torch.float32)
+        
         if not hasattr(pixel_values, 'shape') or len(pixel_values.shape) != 4:
             logger.warning(f"Invalid pixel_values shape: {getattr(pixel_values, 'shape', 'no shape')}")
             return False

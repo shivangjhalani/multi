@@ -168,7 +168,12 @@ def test_robust_processing():
                 valid_samples += 1
             
             print(f"  ✓ Sample {i}: {list(sample.keys())}")
-            print(f"    - Pixel values shape: {sample['pixel_values'].shape}")
+            
+            # Handle pixel_values conversion from list to tensor
+            pixel_values = sample['pixel_values']
+            if isinstance(pixel_values, list):
+                pixel_values = torch.tensor(pixel_values, dtype=torch.float32)
+            print(f"    - Pixel values shape: {pixel_values.shape}")
             print(f"    - Question tokens: {len(sample['question_tokenized'])}")
             print(f"    - Steps: {len(sample['steps_tokenized'])}")
         
