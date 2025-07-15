@@ -1,0 +1,57 @@
+# Multimodal CoCoNuT Configuration
+# Following the original CoCoNuT configuration patterns
+
+# Experiment settings
+name: "multimodal-coconut-aokvqa"
+seed: 42
+
+# Model configuration
+model_id: "OpenGVLab/InternVL3-1B-Pretrained"
+load_model_path: "None"  # Path to pre-trained checkpoint
+coconut: true
+cot: false
+
+# CoCoNuT parameters
+c_thought: 2
+max_latent_stage: 4
+epochs_per_stage: 5
+uniform_prob: 0.1
+
+# Training parameters
+num_epochs: 40
+batch_size_training: 8
+batch_size_eval: 16
+learning_rate: 1e-5
+weight_decay: 0.01
+warmup_steps: 1000
+gradient_clip_norm: 1.0
+
+# Multimodal parameters
+image_size: 448
+max_num_patches: 12
+use_thumbnail: true
+dynamic_preprocess: true
+
+# Data paths
+train_data_path: "data/aokvqa/train.json"
+val_data_path: "data/aokvqa/val.json"
+test_data_path: "data/aokvqa/test.json"
+image_root: "data/aokvqa/images"
+
+# Distributed training
+use_fsdp: true
+use_ddp: false
+
+# Evaluation
+only_eval: false
+eval_every_n_epochs: 5
+
+# Checkpointing
+save_path: "checkpoints"
+resume: 0
+save_every_n_epochs: 5
+
+# Logging
+log_level: "INFO"
+use_wandb: true
+wandb_project: "multimodal-coconut"
