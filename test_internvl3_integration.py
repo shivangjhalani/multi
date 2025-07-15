@@ -119,11 +119,12 @@ def test_model_forward_pass():
         # Create dummy inputs
         batch_size = 2
         seq_len = 20
-        num_patches = 4
+        num_patches_per_sample = 4
         image_size = 448
+        total_patches = batch_size * num_patches_per_sample
         
         # Create dummy pixel values (simulating processed images)
-        pixel_values = torch.randn(batch_size * num_patches, 3, image_size, image_size, dtype=torch.bfloat16)
+        pixel_values = torch.randn(total_patches, 3, image_size, image_size, dtype=torch.bfloat16)
         
         # Create dummy input IDs
         input_ids = torch.randint(1, 1000, (batch_size, seq_len), dtype=torch.long)
@@ -131,8 +132,8 @@ def test_model_forward_pass():
         # Create attention mask
         attention_mask = torch.ones(batch_size, seq_len, dtype=torch.long)
         
-        # Create image flags
-        image_flags = torch.ones(batch_size, 1, dtype=torch.long)
+        # Create image flags - one flag per image patch, not per batch sample
+        image_flags = torch.ones(total_patches, 1, dtype=torch.long)
         
         print(f"✓ Created dummy inputs:")
         print(f"  - pixel_values shape: {pixel_values.shape}")
