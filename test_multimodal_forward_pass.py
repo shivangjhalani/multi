@@ -81,9 +81,9 @@ def test_multimodal_forward_pass():
         print("TEST 2: Multimodal Embeddings Preparation")
         print("="*40)
         
-        # Create dummy image data
+        # Create dummy image data (use bfloat16 to match model)
         batch_size = 1
-        pixel_values = torch.randn(batch_size, 3, 448, 448, device=device, dtype=torch.float32)
+        pixel_values = torch.randn(batch_size, 3, 448, 448, device=device, dtype=torch.bfloat16)
         attention_mask = torch.ones_like(input_ids, device=device)
         position_ids = torch.arange(input_ids.size(1), device=device).unsqueeze(0)
         image_flags = torch.ones(batch_size, 1, device=device, dtype=torch.long)
