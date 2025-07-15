@@ -1,62 +1,92 @@
 #!/usr/bin/env python3
 """
-Test script for A-OKVQA dataset integration with multimodal CoCoNuT
+Test script for A-OKVQA dataset integration with Multimodal CoCoNuT
 
-This script tests the multimodal dataset implementation with the prepared A-OKVQA data
-to ensure everything works correctly before proceeding with training.
+This script tests the complete pipeline:
+1. A-OKVQA dataset preparation
+2. Multimodal dataset loading
+3. Image processing
+4. Tokenization
+5. Data collation
+6. Integration with CoCoNuT training format
+
+Usage:
+    python test_aokvqa_dataset.py
 """
 
+import os
 import sys
 import json
 from pathlib import Path
+from typing import Dict, Any
 
-# Add the multimodal_coconut package to path
-sys.path.append('.')
+import torch
+from transformers import AutoTokenizer
+from datasets import load_dataset
 
-try:
-    from transformers import AutoTokenizer
-    from multimodal_coconut.data.dataset import MultimodalDataset, get_multimodal_dataset
-    from multimodal_coconut.data.image_processor import ImageProcessor
-    IMPORTS_OK = True
-except ImportError as e:
-    print(f"Import error: {e}")
-    IMPORTS_OK = False
+# Add the project root to Python path
+sys.path.insert(0, str(Path(__file__).parent))
+
+from multimodal_coconut.data.dataset import MultimodalDataset, MultimodalCollator
+from multimodal_coconut.data.image_processor import ImageProcessor
+from multimodal_coconut.data.prepare_aokvqa import main as prepare_aokvqa_main
 
 
-def test_data_loading():
-    """Test basic data loading"""
-    print("Testing data loading...")
+def test_aokvqa_preparation():
+    """Test A-OKVQA dataset preparation"""
+    print("🧪 Testing A-OKVQA Dataset Preparation")
+    print("=" * 50)
     
-    # Check if data files exist
-    data_dir = Path("data/aokvqa")
-    train_file = data_dir / "train.json"
-    val_file = data_dir / "validation.json"
+    # Prepare small sample of validation data
+    output_dir = Path("data/aokvqa")
     
-    if not train_file.exists():
-        print(f"❌ Train file not found: {train_file}")
+    if not (output_dir / "validation.json").exists():
+        print("📥 Preparing A-OKVQA validation data...")
+        
+        # Mock command line arguments for preparation script
+        import sys
+        original_argv = sys.argv
+        sys.argv = [
+            "prepare_aokvqa.py",
+            "--output_dir", str(output_dir),
+            "--splits", "validation",
+            "--max_samples", "10"
+        ]
+        
+        try:
+            prepare_aokvqa_main()
+        except SystemExit:
+            pass  # Script calls sys.exit, which is normal
+        finally:
+            sys.argv = original_argv
+    
+    # Verify data exists
+    data_file = output_dir / "validation.json"
+    if not data_file.exists():
+        print("❌ Failed to prepare A-OKVQA data")
         return False
     
-    if not val_file.exists():
-        print(f"❌ Validation file not found: {val_file}")
+    # Load and verify data structure
+    with open(data_file, 'r') as f:
+        data = json.load(f)
+    
+    if not data:
+        print("❌ No data found in prepared file")
         return False
     
-    # Load and check data structure
-    with open(train_file, 'r') as f:
-        train_data = json.load(f)
-    
-    print(f"✅ Loaded {len(train_data)} training samples")
+    print(f"✅ Successfully prepared {len(data)} samples")
     
     # Check sample structure
-    sample = train_data[0]
+    sample = data[0]
     required_fields = ['image_path', 'question', 'steps', 'answer']
     
     for field in required_fields:
         if field not in sample:
-            print(f"❌ Missing field: {field}")
+            print(f"❌ Missing required field: {field}")
             return False
     
     print("✅ Data structure is correct")
-    print(f"Sample question: {sample['question'][:100]}...")
+    print(f"Sample question: {sample['question'][:80]}...")
     print(f"Sample steps: {len(sample['steps'])} steps")
     print(f"Sample answer: {sample['answer']}")
     
@@ -64,34 +94,49 @@ def test_data_loading():
 
 
 def test_image_processor():
-    """Test image processor"""
-    print("\nTesting image processor...")
+    """Test image processing functionality"""
+    print("\n🔍 Image Processor")
+    print("-" * 30)
+    
+    # Test with a sample image from the dataset
+    output_dir = Path("data/aokvqa")
+    data_file = output_dir / "validation.json"
+    
+    if not data_file.exists():
+        print("❌ No validation data found")
+        return False
+    
+    with open(data_file, 'r') as f:
+        data = json.load(f)
+    
+    if not data:
+        print("❌ No samples in validation data")
+        return False
+    
+    # Get first sample
+    sample = data[0]
+    image_path = output_dir / sample['image_path']
+    
+    if not image_path.exists():
+        print(f"❌ Image not found: {image_path}")
+        return False
+    
+    # Test image processor
+    processor = ImageProcessor(
+        image_size=448,
+        max_num_patches=12,
+        use_thumbnail=True
+    )
     
     try:
-        processor = ImageProcessor(
-            image_size=448,
-            max_num_patches=12,
-            use_thumbnail=True
-        )
-        
-        # Test with first image
-        data_dir = Path("data/aokvqa")
-        with open(data_dir / "validation.json", 'r') as f:
-            val_data = json.load(f)
-        
-        sample = val_data[0]
-        image_path = data_dir / sample['image_path']
-        
-        if not image_path.exists():
-            print(f"❌ Image not found: {image_path}")
-            return False
-        
-        # Process image
         pixel_values = processor.load_image(str(image_path))
-        
-        print(f"✅ Image processed successfully")
+        print("✅ Image processed successfully")
         print(f"Image tensor shape: {pixel_values.shape}")
         print(f"Number of patches: {pixel_values.shape[0]}")
+        
+        # Verify tensor properties
+        assert pixel_values.dim() == 4, f"Expected 4D tensor, got {pixel_values.dim()}D"
+        assert pixel_values.shape[1:] == (3, 448, 448), f"Expected (3, 448, 448), got {pixel_values.shape[1:]}"
         
         return True
         
@@ -101,76 +146,71 @@ def test_image_processor():
 
 
 def test_tokenizer():
-    """Test tokenizer loading"""
-    print("\nTesting tokenizer...")
+    """Test tokenizer functionality"""
+    print("\n🔍 Tokenizer")
+    print("-" * 30)
     
     try:
-        # Load InternVL3 tokenizer
+        print("Testing tokenizer...")
         tokenizer = AutoTokenizer.from_pretrained("OpenGVLab/InternVL3-1B-Pretrained", trust_remote_code=True)
         
         # Add special tokens for CoCoNuT
-        special_tokens = ["<|latent|>", "<|start-latent|>", "<|end-latent|>"]
+        special_tokens = ["<|start-latent|>", "<|end-latent|>", "<|latent|>", "<image>"]
         tokenizer.add_tokens(special_tokens)
         
-        print(f"✅ Tokenizer loaded successfully")
+        print("✅ Tokenizer loaded successfully")
         print(f"Vocabulary size: {len(tokenizer)}")
         
         # Test tokenization
-        test_text = "What is in the image? The choices are 0: cat, 1: dog."
-        tokens = tokenizer.encode(test_text)
+        test_text = "<image>\nWhat is in this image?\n"
+        tokens = tokenizer.encode(test_text, add_special_tokens=True)
         print(f"Test tokenization: {len(tokens)} tokens")
         
         return True
         
     except Exception as e:
-        print(f"❌ Tokenizer loading failed: {e}")
+        print(f"❌ Tokenizer test failed: {e}")
         return False
 
 
 def test_multimodal_dataset():
-    """Test multimodal dataset creation"""
-    print("\nTesting multimodal dataset...")
-    
-    if not IMPORTS_OK:
-        print("❌ Cannot test dataset - imports failed")
-        return False
+    """Test multimodal dataset functionality"""
+    print("\n🔍 Multimodal Dataset")
+    print("-" * 30)
     
     try:
         # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained("OpenGVLab/InternVL3-1B-Pretrained", trust_remote_code=True)
-        special_tokens = ["<|latent|>", "<|start-latent|>", "<|end-latent|>"]
+        special_tokens = ["<|start-latent|>", "<|end-latent|>", "<|latent|>", "<image>"]
         tokenizer.add_tokens(special_tokens)
         
-        # Create dataset with small subset for testing
-        data_path = "data/aokvqa/validation.json"
-        image_root = "data/aokvqa"
-        
+        # Create dataset
         print("Creating multimodal dataset...")
-        dataset = get_multimodal_dataset(
-            data_path=data_path,
+        dataset = MultimodalDataset(
+            data_path="data/aokvqa/validation.json",
             tokenizer=tokenizer,
-            image_root=image_root,
+            image_root="data/aokvqa",
             image_size=448,
             max_num_patches=12,
             use_thumbnail=True,
-            max_size=5  # Only process 5 samples for testing
+            max_size=5  # Small sample for testing
         )
         
-        print(f"✅ Dataset created successfully")
+        print("✅ Dataset created successfully")
         print(f"Dataset size: {len(dataset)}")
         
-        # Test getting a sample
+        # Test sample access
         sample = dataset[0]
+        expected_keys = ['idx', 'pixel_values', 'question_tokenized', 'steps_tokenized', 'answer_tokenized', 'num_patches']
+        
         print(f"Sample keys: {list(sample.keys())}")
         
-        # Check sample structure
-        required_fields = ['pixel_values', 'question_tokenized', 'steps_tokenized', 'answer_tokenized', 'num_patches']
-        for field in required_fields:
-            if field not in sample:
-                print(f"❌ Missing processed field: {field}")
+        for key in expected_keys:
+            if key not in sample:
+                print(f"❌ Missing key: {key}")
                 return False
         
-        print(f"✅ Sample structure correct")
+        print("✅ Sample structure correct")
         print(f"Question tokens: {len(sample['question_tokenized'])}")
         print(f"Steps: {len(sample['steps_tokenized'])} reasoning steps")
         print(f"Answer tokens: {len(sample['answer_tokenized'])}")
@@ -180,48 +220,180 @@ def test_multimodal_dataset():
         
     except Exception as e:
         print(f"❌ Multimodal dataset test failed: {e}")
-        import traceback
-        traceback.print_exc()
         return False
 
 
 def test_dataset_verification():
-    """Test dataset verification function"""
-    print("\nTesting dataset verification...")
-    
-    if not IMPORTS_OK:
-        print("❌ Cannot test verification - imports failed")
-        return False
+    """Test dataset verification functionality"""
+    print("\n🔍 Dataset Verification")
+    print("-" * 30)
     
     try:
         # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained("OpenGVLab/InternVL3-1B-Pretrained", trust_remote_code=True)
-        special_tokens = ["<|latent|>", "<|start-latent|>", "<|end-latent|>"]
+        special_tokens = ["<|start-latent|>", "<|end-latent|>", "<|latent|>", "<image>"]
         tokenizer.add_tokens(special_tokens)
         
-        # Create dataset
-        multimodal_dataset = MultimodalDataset(
+        # Create small dataset for verification
+        dataset = MultimodalDataset(
             data_path="data/aokvqa/validation.json",
             tokenizer=tokenizer,
             image_root="data/aokvqa",
             image_size=448,
             max_num_patches=12,
             use_thumbnail=True,
-            max_size=3  # Small subset
+            max_size=3
         )
         
         # Test verification
-        result = multimodal_dataset.verify_sample(0)
+        success = dataset.verify_sample(0)
         
-        if result:
+        if success:
             print("✅ Dataset verification passed")
+            return True
         else:
             print("❌ Dataset verification failed")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Dataset verification test failed: {e}")
+        return False
+
+
+def test_data_collator():
+    """Test multimodal data collator"""
+    print("\n🔍 Data Collator")
+    print("-" * 30)
+    
+    try:
+        # Load tokenizer
+        tokenizer = AutoTokenizer.from_pretrained("OpenGVLab/InternVL3-1B-Pretrained", trust_remote_code=True)
+        special_tokens = ["<|start-latent|>", "<|end-latent|>", "<|latent|>", "<image>"]
+        tokenizer.add_tokens(special_tokens)
         
-        return result
+        # Get latent token ID
+        latent_id = tokenizer.convert_tokens_to_ids("<|latent|>")
+        
+        # Create dataset
+        dataset = MultimodalDataset(
+            data_path="data/aokvqa/validation.json",
+            tokenizer=tokenizer,
+            image_root="data/aokvqa",
+            image_size=448,
+            max_num_patches=12,
+            use_thumbnail=True,
+            max_size=3
+        )
+        
+        # Create collator
+        collator = MultimodalCollator(
+            tokenizer=tokenizer,
+            latent_id=latent_id
+        )
+        
+        # Test collation
+        samples = [dataset[i] for i in range(min(2, len(dataset)))]
+        batch = collator(samples)
+        
+        print("✅ Data collation successful")
+        print(f"Batch keys: {list(batch.keys())}")
+        print(f"Input IDs shape: {batch['input_ids'].shape}")
+        print(f"Pixel values shape: {batch['pixel_values'].shape}")
+        print(f"Number of patches: {batch['num_patches_list']}")
+        
+        return True
         
     except Exception as e:
-        print(f"❌ Verification test failed: {e}")
+        print(f"❌ Data collator test failed: {e}")
+        return False
+
+
+def test_coconut_integration():
+    """Test integration with CoCoNuT training format"""
+    print("\n🔍 CoCoNuT Integration")
+    print("-" * 30)
+    
+    try:
+        from multimodal_coconut.data.dataset import get_multimodal_cot_latent_dataset
+        
+        # Load tokenizer
+        tokenizer = AutoTokenizer.from_pretrained("OpenGVLab/InternVL3-1B-Pretrained", trust_remote_code=True)
+        special_tokens = ["<|start-latent|>", "<|end-latent|>", "<|latent|>", "<image>"]
+        tokenizer.add_tokens(special_tokens)
+        
+        # Get special token IDs
+        start_id = tokenizer.convert_tokens_to_ids("<|start-latent|>")
+        latent_id = tokenizer.convert_tokens_to_ids("<|latent|>")
+        end_id = tokenizer.convert_tokens_to_ids("<|end-latent|>")
+        
+        # Create base dataset
+        base_dataset = MultimodalDataset(
+            data_path="data/aokvqa/validation.json",
+            tokenizer=tokenizer,
+            image_root="data/aokvqa",
+            image_size=448,
+            max_num_patches=12,
+            use_thumbnail=True,
+            max_size=3
+        ).dataset
+        
+        # Mock config object
+        class MockConfig:
+            def __init__(self):
+                self.uniform_prob = 0.1
+                self.max_latent_stage = 2
+                self.pad_latent_to_max = False
+                self.no_cot = False
+                self.c_thought = 2
+        
+        config = MockConfig()
+        
+        # Test CoT dataset preparation (Stage 0)
+        cot_dataset = get_multimodal_cot_latent_dataset(
+            scheduled_stage=0,
+            base_dataset=base_dataset,
+            configs=config,
+            start_id=start_id,
+            latent_id=latent_id,
+            end_id=end_id
+        )
+        
+        print("✅ CoT dataset preparation successful")
+        print(f"CoT dataset size: {len(cot_dataset)}")
+        
+        # Test CoCoNuT dataset preparation (Stage 1)
+        coconut_dataset = get_multimodal_cot_latent_dataset(
+            scheduled_stage=1,
+            base_dataset=base_dataset,
+            configs=config,
+            start_id=start_id,
+            latent_id=latent_id,
+            end_id=end_id
+        )
+        
+        print("✅ CoCoNuT dataset preparation successful")
+        print(f"CoCoNuT dataset size: {len(coconut_dataset)}")
+        
+        # Check sample structure
+        sample = coconut_dataset[0]
+        expected_keys = ['pixel_values', 'num_patches', 'input_ids', 'labels', 'attention_mask', 'idx', 'position_ids']
+        
+        for key in expected_keys:
+            if key not in sample:
+                print(f"❌ Missing key in CoCoNuT sample: {key}")
+                return False
+        
+        print("✅ CoCoNuT sample structure correct")
+        
+        # Check for latent tokens in input
+        input_ids = sample['input_ids']
+        has_latent = latent_id in input_ids
+        print(f"Contains latent tokens: {has_latent}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ CoCoNuT integration test failed: {e}")
         return False
 
 
@@ -231,27 +403,26 @@ def main():
     print("=" * 50)
     
     tests = [
-        ("Data Loading", test_data_loading),
+        ("Data Preparation", test_aokvqa_preparation),
         ("Image Processor", test_image_processor),
         ("Tokenizer", test_tokenizer),
         ("Multimodal Dataset", test_multimodal_dataset),
         ("Dataset Verification", test_dataset_verification),
+        ("Data Collator", test_data_collator),
+        ("CoCoNuT Integration", test_coconut_integration),
     ]
     
-    results = []
+    results = {}
     
     for test_name, test_func in tests:
-        print(f"\n🔍 {test_name}")
-        print("-" * 30)
-        
         try:
-            result = test_func()
-            results.append((test_name, result))
+            success = test_func()
+            results[test_name] = success
         except Exception as e:
-            print(f"❌ {test_name} failed with exception: {e}")
-            results.append((test_name, False))
+            print(f"❌ {test_name} test crashed: {e}")
+            results[test_name] = False
     
-    # Summary
+    # Print summary
     print("\n" + "=" * 50)
     print("📊 Test Summary")
     print("=" * 50)
@@ -259,20 +430,22 @@ def main():
     passed = 0
     total = len(results)
     
-    for test_name, result in results:
-        status = "✅ PASS" if result else "❌ FAIL"
+    for test_name, success in results.items():
+        status = "✅ PASS" if success else "❌ FAIL"
         print(f"{test_name:.<30} {status}")
-        if result:
+        if success:
             passed += 1
     
-    print(f"\nOverall: {passed}/{total} tests passed")
+    print(f"\nOverall: {passed}/{total} tests passed", end="")
     
     if passed == total:
-        print("🎉 All tests passed! A-OKVQA dataset integration is working correctly.")
-        return True
+        print(" 🎉")
+        print("\nAll tests passed! A-OKVQA dataset integration is working correctly.")
     else:
-        print("⚠️  Some tests failed. Please check the errors above.")
-        return False
+        print(" ⚠️")
+        print("\nSome tests failed. Please check the errors above.")
+    
+    return passed == total
 
 
 if __name__ == "__main__":

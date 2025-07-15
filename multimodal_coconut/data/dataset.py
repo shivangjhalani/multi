@@ -137,7 +137,7 @@ class MultimodalDataset:
         ) + [self.tokenizer.eos_token_id]
         
         return {
-            "pixel_values": pixel_values.tolist(),  # Convert to list for HF datasets
+            "pixel_values": pixel_values,  # Keep as tensor
             "question_tokenized": question_tokenized,
             "steps_tokenized": steps_tokenized,
             "answer_tokenized": answer_tokenized,
@@ -217,7 +217,7 @@ class MultimodalDataset:
         dummy_answer = self.tokenizer.encode("### Error", add_special_tokens=False) + [self.tokenizer.eos_token_id]
         
         return {
-            "pixel_values": dummy_pixel_values.tolist(),  # Convert to list for HF datasets
+            "pixel_values": dummy_pixel_values,  # Keep as tensor
             "question_tokenized": dummy_question,
             "steps_tokenized": dummy_steps,
             "answer_tokenized": dummy_answer,
@@ -289,6 +289,8 @@ class MultimodalDataset:
             
             # Verify pixel values shape
             pixel_values = processed["pixel_values"]
+            if isinstance(pixel_values, list):
+                pixel_values = torch.tensor(pixel_values, dtype=torch.float32)
             assert pixel_values.dim() == 4  # [num_patches, channels, height, width]
             assert pixel_values.shape[1:] == (3, self.image_size, self.image_size)
             
