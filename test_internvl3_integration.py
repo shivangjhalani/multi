@@ -116,9 +116,8 @@ def test_model_forward_pass():
         model, tokenizer = create_multimodal_coconut_model(config)
         model.eval()
         
-        # Create dummy inputs
+        # Create dummy inputs that match InternVL3's expected format
         batch_size = 2
-        seq_len = 20
         num_patches_per_sample = 4
         image_size = 448
         total_patches = batch_size * num_patches_per_sample
@@ -126,14 +125,29 @@ def test_model_forward_pass():
         # Create dummy pixel values (simulating processed images)
         pixel_values = torch.randn(total_patches, 3, image_size, image_size, dtype=torch.bfloat16)
         
-        # Create dummy input IDs
-        input_ids = torch.randint(1, 1000, (batch_size, seq_len), dtype=torch.long)
+        # Create proper input with IMG_CONTEXT tokens
+        # InternVL3 expects <img><IMG_CONTEXT>*N</img> format
+        IMG_CONTEXT_TOKEN = '<IMG_CONTEXT>'
+        img_context_token_id = tokenizer.convert_tokens_to_ids(IMG_CONTEXT_TOKEN)
         
-        # Create attention mask
-        attention_mask = torch.ones(batch_size, seq_len, dtype=torch.long)
+        # Create input text with image context tokens
+        num_image_tokens = model.base_model.num_image_token * num_patches_per_sample
+        sample_texts = []
+        for i in range(batch_size):
+            # Create text with proper image context tokens
+            text = f"<img>{'<IMG_CONTEXT>' * num_image_tokens}</img>What is in this image?"
+            sample_texts.append(text)
         
-        # Create image flags - one flag per image patch, not per batch sample
+        # Tokenize the texts
+        tokenized = tokenizer(sample_texts, return_tensors='pt', padding=True)
+        input_ids = tokenized['input_ids']
+        attention_mask = tokenized['attention_mask']
+        
+        # Create image flags - one flag per image patch
         image_flags = torch.ones(total_patches, 1, dtype=torch.long)
+        
+        # Set the img_context_token_id in the model
+        model.base_model.img_context_token_id = img_context_token_id
         
         print(f"✓ Created dummy inputs:")
         print(f"  - pixel_values shape: {pixel_values.shape}")
