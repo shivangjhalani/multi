@@ -413,11 +413,6 @@ class MultimodalCoconut(nn.Module):
         # Extract visual features using InternVL3's vision encoder
         vit_embeds = self.base_model.extract_feature(pixel_values)
         
-        # Handle case where extract_feature returns None
-        if vit_embeds is None:
-            # No visual features available, return text embeddings only
-            return input_embeds
-        
         # Filter visual embeddings based on image flags
         if image_flags is not None:
             image_flags = image_flags.squeeze(-1)
