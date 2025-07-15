@@ -55,17 +55,16 @@ def create_mock_multimodal_inputs(batch_size=2, seq_len=20, num_latents=2):
     Returns:
         Dictionary with mock inputs
     """
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cpu')  # Use CPU to avoid CUDA issues in testing
     
     # Create mock pixel values (simulating preprocessed images)
     pixel_values = torch.randn(batch_size, 3, 448, 448, device=device, dtype=torch.float32)
     
-    # Create input_ids with latent tokens
-    # Format: [regular tokens] + [latent tokens] + [more regular tokens]
-    input_ids = torch.randint(1000, 2000, (batch_size, seq_len), device=device)
+    # Create input_ids with latent tokens - use smaller vocab to avoid indexing issues
+    input_ids = torch.randint(100, 1000, (batch_size, seq_len), device=device)
     
     # Insert latent tokens at specific positions
-    latent_token_id = 50000  # Mock latent token ID
+    latent_token_id = 1500  # Mock latent token ID within vocab range
     for i in range(batch_size):
         # Insert latent tokens at positions 5, 6 for first sample and 7, 8 for second sample
         start_pos = 5 + i * 2
@@ -101,7 +100,7 @@ def create_mock_multimodal_inputs(batch_size=2, seq_len=20, num_latents=2):
 class MockInternVL3Model(nn.Module):
     """Mock InternVL3 model for testing purposes"""
     
-    def __init__(self, vocab_size=50000, hidden_size=768, num_layers=12):
+    def __init__(self, vocab_size=2000, hidden_size=768, num_layers=12):  # Smaller vocab for testing
         super().__init__()
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
@@ -120,7 +119,7 @@ class MockInternVL3Model(nn.Module):
         })()
         
         # Mock image context token ID
-        self.img_context_token_id = 32000
+        self.img_context_token_id = 1600  # Within vocab range
     
     def extract_feature(self, pixel_values):
         """Mock visual feature extraction"""
