@@ -152,13 +152,17 @@ class MultimodalDataset:
         dataset_dict = {k: [d[k] for d in self.data] for k in keys}
         dataset = Dataset.from_dict(dataset_dict)
         
+        # Use appropriate number of processes for dataset size
+        optimal_num_proc = min(8, max(1, len(self.data) // 10)) if len(self.data) > 10 else 1
+        
         # Follow original CoCoNuT pattern: simple distributed processing
         if torch.cuda.device_count() > 1 and dist.is_initialized():
             if dist.get_rank() == 0:
                 processed_dataset = [dataset.map(
                     self.tokenize_multimodal_sample, 
                     remove_columns=list(dataset.features), 
-                    num_proc=8
+                    num_proc=optimal_num_proc,
+                    desc="Tokenizing multimodal samples"
                 )]
             else:
                 processed_dataset = [None]
@@ -168,7 +172,8 @@ class MultimodalDataset:
             dataset = dataset.map(
                 self.tokenize_multimodal_sample, 
                 remove_columns=list(dataset.features), 
-                num_proc=8
+                num_proc=optimal_num_proc,
+                desc="Tokenizing multimodal samples"
             )
         
         return dataset
