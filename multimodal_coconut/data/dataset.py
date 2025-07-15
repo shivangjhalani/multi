@@ -361,7 +361,13 @@ class MultimodalCollator:
         Collate multimodal features into batches
         
         Args:
-            features: List of feature dictionaries containing:
+            features: List of feature dictionaries containing either:
+                Raw format (from MultimodalDataset):
+                - pixel_values: Image tensor [num_patches, 3, H, W]
+                - question_tokenized, steps_tokenized, answer_tokenized
+                - num_patches: Number of image patches
+                
+                Processed format (from get_multimodal_cot_latent_dataset):
                 - pixel_values: Image tensor [num_patches, 3, H, W]
                 - input_ids: Text token IDs
                 - labels: Target labels (optional)
@@ -374,23 +380,51 @@ class MultimodalCollator:
         """
         assert self.tokenizer.padding_side == "right"
         
+        # Check if features are in raw format (from MultimodalDataset) or processed format
+        if 'input_ids' not in features[0]:
+            # Raw format - convert to simple input_ids format for basic collation
+            processed_features = []
+            for feature in features:
+                # Create simple input_ids by concatenating question + steps + answer
+                import itertools
+                input_ids = (
+                    feature['question_tokenized'] +
+                    list(itertools.chain.from_iterable(feature['steps_tokenized'])) +
+                    feature['answer_tokenized']
+                )
+                
+                processed_feature = {
+                    'pixel_values': feature['pixel_values'],
+                    'num_patches': feature['num_patches'],
+                    'input_ids': input_ids,
+                    'attention_mask': [1] * len(input_ids),
+                    'idx': feature.get('idx', 0)
+                }
+                processed_features.append(processed_feature)
+            features = processed_features
+        
         # Separate pixel_values and num_patches from text features
         pixel_values_list = []
         num_patches_list = []
         text_features = []
         
         for feature in features:
-            pixel_values_list.append(feature.pop('pixel_values'))
-            num_patches_list.append(feature.pop('num_patches'))
-            text_features.append(feature)
+            # Make a copy to avoid modifying original
+            feature_copy = feature.copy()
+            pixel_values_list.append(feature_copy.pop('pixel_values'))
+            num_patches_list.append(feature_copy.pop('num_patches'))
+            text_features.append(feature_copy)
         
         # Apply the original CoCoNuT collation logic for text
         # This handles latent token alignment for KV cache efficiency
-        earliest_latent = [
-            feature["input_ids"].index(self.latent_id)
-            for feature in text_features
-            if self.latent_id in feature["input_ids"]
-        ]
+        if self.latent_id is not None:
+            earliest_latent = [
+                feature["input_ids"].index(self.latent_id)
+                for feature in text_features
+                if self.latent_id in feature["input_ids"]
+            ]
+        else:
+            earliest_latent = []
 
         if len(earliest_latent) > 0:  # if there are continuous thoughts in the sequence
             latest_earliest_latent = max(earliest_latent)
@@ -485,11 +519,14 @@ class MultimodalCollator:
         Returns:
             Dictionary with batched multimodal tensors
         """
-        # Convert lists back to tensors if needed (HF datasets serialization issue)
+        # Ensure all pixel_values are tensors (handle both tensor and list formats)
         tensor_list = []
         for pixel_values in pixel_values_list:
             if isinstance(pixel_values, list):
-                # Convert list back to tensor
+                # Convert list back to tensor (HF datasets serialization)
+                pixel_values = torch.tensor(pixel_values, dtype=torch.float32)
+            elif not isinstance(pixel_values, torch.Tensor):
+                # Handle any other format
                 pixel_values = torch.tensor(pixel_values, dtype=torch.float32)
             tensor_list.append(pixel_values)
         
