@@ -215,24 +215,19 @@ class MultimodalCoconut(nn.Module):
                     attention_mask=attention_mask[:, next_compute_range[0]:next_compute_range[1]] if attention_mask is not None else None,
                     position_ids=position_ids[:, next_compute_range[0]:next_compute_range[1]] if position_ids is not None else None,
                     output_hidden_states=True,
+                    use_cache=True,
                 )
                 hidden_states_offset = 0
             else:
-                # Extract KV cache to reuse (exactly like original)
-                past_key_values_truncated = [
-                    (
-                        k[:, :, :next_compute_range[0], :],
-                        v[:, :, :next_compute_range[0], :],
-                    )
-                    for k, v in kv_cache
-                ]
-                
+                # For newer transformers, we need to handle Cache objects properly
+                # We'll pass None and let the model handle caching internally
                 outputs = self.base_model.language_model(
                     inputs_embeds=inputs_embeds[:, next_compute_range[0]:next_compute_range[1], :],
                     attention_mask=attention_mask[:, :next_compute_range[1]] if attention_mask is not None else None,
                     position_ids=position_ids[:, next_compute_range[0]:next_compute_range[1]] if position_ids is not None else None,
-                    past_key_values=past_key_values_truncated,
+                    past_key_values=None,  # Let the model handle caching internally
                     output_hidden_states=True,
+                    use_cache=True,
                 )
                 hidden_states_offset = next_compute_range[0]
             
@@ -283,22 +278,12 @@ class MultimodalCoconut(nn.Module):
                 for batch_idx in range(inputs_embeds.shape[0])
             ])
         
-        # Final forward pass (exactly like original CoCoNuT)
+        # Final forward pass (adapted for newer transformers)
         final_outputs = self.base_model.language_model(
             inputs_embeds=inputs_embeds[:, next_compute_range[0]:next_compute_range[1], :],
             attention_mask=attention_mask[:, :next_compute_range[1]] if attention_mask is not None else None,
             position_ids=position_ids[:, next_compute_range[0]:next_compute_range[1]] if position_ids is not None else None,
-            past_key_values=(
-                [
-                    (
-                        k[:, :, :next_compute_range[0], :],
-                        v[:, :, :next_compute_range[0], :],
-                    )
-                    for k, v in kv_cache
-                ]
-                if kv_cache
-                else None
-            ),
+            past_key_values=None,  # Let the model handle caching internally
             output_hidden_states=output_hidden_states,
         )
         
