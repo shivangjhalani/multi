@@ -82,19 +82,44 @@ def validate_config(config: Config) -> None:
         if not hasattr(config, field):
             raise ValueError(f"Missing required config field: {field}")
     
-    # Validate CoCoNuT parameters
-    if config.c_thought < 1:
-        raise ValueError("c_thought must be >= 1")
+    # Validate CoCoNuT parameters with type checking
+    c_thought = getattr(config, 'c_thought', None)
+    if c_thought is not None:
+        try:
+            c_thought_int = int(c_thought)
+            if c_thought_int < 1:
+                raise ValueError("c_thought must be >= 1")
+        except (ValueError, TypeError):
+            raise ValueError(f"c_thought must be an integer, got {type(c_thought)}")
     
-    if hasattr(config, 'max_latent_stage') and config.max_latent_stage < 1:
-        raise ValueError("max_latent_stage must be >= 1")
+    # Validate max_latent_stage
+    if hasattr(config, 'max_latent_stage'):
+        max_latent_stage = getattr(config, 'max_latent_stage')
+        try:
+            max_latent_stage_int = int(max_latent_stage)
+            if max_latent_stage_int < 1:
+                raise ValueError("max_latent_stage must be >= 1")
+        except (ValueError, TypeError):
+            raise ValueError(f"max_latent_stage must be an integer, got {type(max_latent_stage)}")
     
     # Validate training parameters
-    if hasattr(config, 'batch_size_training') and config.batch_size_training <= 0:
-        raise ValueError("batch_size_training must be positive")
+    if hasattr(config, 'batch_size_training'):
+        batch_size = getattr(config, 'batch_size_training')
+        try:
+            batch_size_int = int(batch_size)
+            if batch_size_int <= 0:
+                raise ValueError("batch_size_training must be positive")
+        except (ValueError, TypeError):
+            raise ValueError(f"batch_size_training must be an integer, got {type(batch_size)}")
     
-    if hasattr(config, 'learning_rate') and config.learning_rate <= 0:
-        raise ValueError("learning_rate must be positive")
+    if hasattr(config, 'learning_rate'):
+        lr = getattr(config, 'learning_rate')
+        try:
+            lr_float = float(lr)
+            if lr_float <= 0:
+                raise ValueError("learning_rate must be positive")
+        except (ValueError, TypeError):
+            raise ValueError(f"learning_rate must be a number, got {type(lr)}")
     
     # Validate data paths if specified
     data_paths = ['train_data_path', 'val_data_path', 'test_data_path']
