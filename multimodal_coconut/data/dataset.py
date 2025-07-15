@@ -161,8 +161,7 @@ class MultimodalDataset:
                 processed_dataset = [dataset.map(
                     self.tokenize_multimodal_sample, 
                     remove_columns=list(dataset.features), 
-                    num_proc=optimal_num_proc,
-                    desc="Tokenizing multimodal samples"
+                    num_proc=optimal_num_proc
                 )]
             else:
                 processed_dataset = [None]
@@ -172,8 +171,7 @@ class MultimodalDataset:
             dataset = dataset.map(
                 self.tokenize_multimodal_sample, 
                 remove_columns=list(dataset.features), 
-                num_proc=optimal_num_proc,
-                desc="Tokenizing multimodal samples"
+                num_proc=optimal_num_proc
             )
         
         return dataset
