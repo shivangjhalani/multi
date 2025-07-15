@@ -169,11 +169,16 @@ class MultimodalCoconut(nn.Module):
         Core multimodal CoCoNuT forward pass with iterative processing.
         
         This implements the multi-pass algorithm following the original CoCoNuT pattern:
-        1. Find earliest latent token position across batch
-        2. Process sequence up to that position (including multimodal processing)
-        3. Extract hidden state and use as embedding for latent token
-        4. Continue iteratively for all latent tokens
-        5. Final forward pass for remaining sequence
+        1. Process multimodal inputs (images + text) to get initial embeddings
+        2. Group latent tokens by batch and position (following original CoCoNuT)
+        3. Perform iterative forward passes with continuous thought feedback
+        4. Use KV cache for efficiency across passes
+        5. Concatenate all logits and compute final loss
+        
+        Key differences from original CoCoNuT:
+        - Handles multimodal inputs (pixel_values + input_ids)
+        - Integrates visual features into text embeddings
+        - Maintains InternVL3's multimodal attention mechanisms
         
         Args:
             pixel_values: Image pixel values
@@ -187,12 +192,180 @@ class MultimodalCoconut(nn.Module):
         batch_size, seq_len = input_ids.shape
         device = input_ids.device
         
-        # Get input embeddings from the language model
+        # Step 1: Get initial embeddings and integrate multimodal features
+        inputs_embeds = self._prepare_multimodal_embeddings(
+            pixel_values, input_ids, image_flags
+        )
+        
+        # Step 2: Group latent tokens by batch (following original CoCoNuT pattern)
+        latent_lists = [
+            [idx[1].item() for idx in latent_indices if idx[0] == i]
+            for i in range(batch_size)
+        ]  # bs, num_latent_tokens_in_the_instance
+        
+        max_n_latents = max([len(l) for l in latent_lists]) if latent_lists else 0
+        
+        if max_n_latents == 0:
+            # No latent tokens - use standard forward pass
+            return self._standard_multimodal_forward(
+                inputs_embeds, attention_mask, position_ids, past_key_values,
+                labels, use_cache, output_attentions, output_hidden_states, return_dict
+            )
+        
+        # Step 3: Iterative forward passes following original CoCoNuT algorithm
+        logits = []
+        next_compute_range = (0, latent_indices[:, 1].min().item())  # before earliest latent token
+        kv_cache = past_key_values
+        
+        for pass_idx in range(max_n_latents):
+            # Forward pass for current segment
+            if kv_cache is None:
+                # First forward pass
+                outputs = self.base_model.language_model(
+                    inputs_embeds=inputs_embeds[:, next_compute_range[0]:next_compute_range[1], :],
+                    attention_mask=attention_mask[:, next_compute_range[0]:next_compute_range[1]] if attention_mask is not None else None,
+                    position_ids=position_ids[:, next_compute_range[0]:next_compute_range[1]] if position_ids is not None else None,
+                    output_hidden_states=True,
+                    return_dict=True
+                )
+                hidden_states_offset = 0
+            else:
+                # Extract KV cache to reuse (following original CoCoNuT pattern)
+                past_key_values_truncated = [
+                    (
+                        k[:, :, :next_compute_range[0], :],
+                        v[:, :, :next_compute_range[0], :]
+                    )
+                    for k, v in kv_cache
+                ]
+                
+                outputs = self.base_model.language_model(
+                    inputs_embeds=inputs_embeds[:, next_compute_range[0]:next_compute_range[1], :],
+                    attention_mask=attention_mask[:, :next_compute_range[1]] if attention_mask is not None else None,
+                    position_ids=position_ids[:, next_compute_range[0]:next_compute_range[1]] if position_ids is not None else None,
+                    past_key_values=past_key_values_truncated,
+                    output_hidden_states=True,
+                    return_dict=True
+                )
+                hidden_states_offset = next_compute_range[0]
+            
+            logits.append(outputs.logits)
+            
+            # Update compute range for next iteration
+            next_compute_range = (
+                next_compute_range[1],
+                (
+                    seq_len
+                    if pass_idx + 1 >= max_n_latents
+                    else next_compute_range[1] + 1
+                )
+            )
+            
+            # Extract hidden states for continuous thought feedback
+            hidden_states = outputs.last_hidden_state  # [batch_size, seq_len, hidden_size]
+            kv_cache = outputs.past_key_values
+            
+            # Step 4: Apply continuous thought feedback (following original CoCoNuT)
+            filling_indices = [
+                (instance_idx, mask_list[pass_idx])
+                for instance_idx, mask_list in enumerate(latent_lists)
+                if len(mask_list) > pass_idx
+            ]
+            
+            # Break down inputs_embeds to avoid in-place operations (original CoCoNuT pattern)
+            tensor_list = [
+                [
+                    inputs_embeds[batch_idx, pos, :]
+                    for pos in range(inputs_embeds.shape[1])
+                ]
+                for batch_idx in range(inputs_embeds.shape[0])
+            ]
+            
+            # Replace latent token embeddings with continuous thoughts
+            for idx_pair in filling_indices:
+                batch_idx, token_idx = idx_pair
+                
+                # Replace with preceding hidden state (continuous thought feedback)
+                tensor_list[batch_idx][token_idx] = hidden_states[
+                    batch_idx, token_idx - 1 - hidden_states_offset, :
+                ]
+            
+            # Reassemble inputs_embeds
+            inputs_embeds = torch.stack([
+                torch.stack(tensor_list[batch_idx])
+                for batch_idx in range(inputs_embeds.shape[0])
+            ])
+        
+        # Step 5: Final forward pass for remaining sequence
+        final_outputs = self.base_model.language_model(
+            inputs_embeds=inputs_embeds[:, next_compute_range[0]:next_compute_range[1], :],
+            attention_mask=attention_mask[:, :next_compute_range[1]] if attention_mask is not None else None,
+            position_ids=position_ids[:, next_compute_range[0]:next_compute_range[1]] if position_ids is not None else None,
+            past_key_values=(
+                [
+                    (
+                        k[:, :, :next_compute_range[0], :],
+                        v[:, :, :next_compute_range[0], :]
+                    )
+                    for k, v in kv_cache
+                ]
+                if kv_cache
+                else None
+            ),
+            output_hidden_states=output_hidden_states,
+            output_attentions=output_attentions,
+            return_dict=True
+        )
+        
+        logits.append(final_outputs.logits)
+        
+        # Step 6: Concatenate all logits and compute loss (following original CoCoNuT)
+        logits = torch.cat(logits, dim=-2)  # Concatenate along sequence dimension
+        
+        loss = None
+        if labels is not None:
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
+            loss = loss_fct(
+                shift_logits.view(-1, shift_logits.size(-1)),
+                shift_labels.view(-1)
+            )
+        
+        return CausalLMOutputWithPast(
+            loss=loss,
+            logits=logits,
+            past_key_values=final_outputs.past_key_values,
+            hidden_states=final_outputs.hidden_states,
+            attentions=final_outputs.attentions,
+        )
+    
+    def _prepare_multimodal_embeddings(self,
+                                     pixel_values: torch.FloatTensor,
+                                     input_ids: torch.LongTensor,
+                                     image_flags: Optional[torch.LongTensor] = None) -> torch.Tensor:
+        """
+        Prepare multimodal embeddings by integrating visual features into text embeddings.
+        
+        This follows InternVL3's pattern of replacing image context tokens with visual embeddings.
+        
+        Args:
+            pixel_values: Image pixel values [batch_size, num_patches, channels, height, width]
+            input_ids: Text token IDs [batch_size, sequence_length]
+            image_flags: Flags indicating which samples have images [batch_size, 1]
+            
+        Returns:
+            inputs_embeds: Combined multimodal embeddings [batch_size, sequence_length, hidden_size]
+        """
+        batch_size, seq_len = input_ids.shape
+        device = input_ids.device
+        
+        # Get text embeddings
         inputs_embeds = self.base_model.language_model.get_input_embeddings()(input_ids)
         
-        # Process visual features and integrate them into embeddings (following InternVL3 pattern)
+        # Integrate visual features if images are provided
         if pixel_values is not None:
-            # Extract visual features
+            # Extract visual features using InternVL3's vision encoder
             vit_embeds = self.base_model.extract_feature(pixel_values)
             
             # Handle image flags - if not provided, assume all samples have images
@@ -206,157 +379,74 @@ class MultimodalCoconut(nn.Module):
             
             # Replace image context tokens with visual embeddings
             B, N, C = inputs_embeds.shape
-            inputs_embeds = inputs_embeds.reshape(B * N, C)
+            inputs_embeds_flat = inputs_embeds.reshape(B * N, C)
             input_ids_flat = input_ids.reshape(B * N)
             
-            # Find image context token positions (assuming <IMG_CONTEXT> token)
+            # Find image context token positions
             img_context_token_id = getattr(self.base_model, 'img_context_token_id', None)
             if img_context_token_id is not None:
                 selected = (input_ids_flat == img_context_token_id)
                 if selected.sum() > 0 and len(vit_embeds) > 0:
                     try:
-                        inputs_embeds[selected] = inputs_embeds[selected] * 0.0 + vit_embeds.reshape(-1, C)
+                        # Replace image context tokens with visual embeddings
+                        inputs_embeds_flat[selected] = inputs_embeds_flat[selected] * 0.0 + vit_embeds.reshape(-1, C)
                     except Exception as e:
                         # Handle size mismatch gracefully
                         vit_embeds_flat = vit_embeds.reshape(-1, C)
                         n_token = selected.sum()
-                        inputs_embeds[selected] = inputs_embeds[selected] * 0.0 + vit_embeds_flat[:n_token]
+                        if n_token > 0 and len(vit_embeds_flat) > 0:
+                            inputs_embeds_flat[selected] = inputs_embeds_flat[selected] * 0.0 + vit_embeds_flat[:n_token]
             
-            inputs_embeds = inputs_embeds.reshape(B, N, C)
+            inputs_embeds = inputs_embeds_flat.reshape(B, N, C)
         
-        # Group latent indices by position for efficient processing
-        latent_positions_by_batch = {}
-        for idx_tensor in latent_indices:
-            batch_idx, pos = idx_tensor[0].item(), idx_tensor[1].item()
-            if batch_idx not in latent_positions_by_batch:
-                latent_positions_by_batch[batch_idx] = []
-            latent_positions_by_batch[batch_idx].append(pos)
+        return inputs_embeds
+    
+    def _standard_multimodal_forward(self,
+                                   inputs_embeds: torch.Tensor,
+                                   attention_mask: Optional[torch.Tensor] = None,
+                                   position_ids: Optional[torch.LongTensor] = None,
+                                   past_key_values: Optional[List[torch.FloatTensor]] = None,
+                                   labels: Optional[torch.LongTensor] = None,
+                                   use_cache: Optional[bool] = None,
+                                   output_attentions: Optional[bool] = None,
+                                   output_hidden_states: Optional[bool] = None,
+                                   return_dict: Optional[bool] = None) -> CausalLMOutputWithPast:
+        """
+        Standard forward pass for multimodal inputs without latent tokens.
         
-        # Sort positions for each batch
-        for batch_idx in latent_positions_by_batch:
-            latent_positions_by_batch[batch_idx].sort()
-        
-        # Find all unique latent positions and sort them
-        all_positions = set()
-        for positions in latent_positions_by_batch.values():
-            all_positions.update(positions)
-        sorted_positions = sorted(all_positions)
-        
-        if not sorted_positions:
-            # No latent tokens - use standard forward pass with processed embeddings
-            outputs = self.base_model.language_model(
-                inputs_embeds=inputs_embeds,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                use_cache=use_cache,
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states,
-                return_dict=return_dict,
-            )
+        Args:
+            inputs_embeds: Combined multimodal embeddings
+            ... (other standard forward pass arguments)
             
-            # Compute loss if labels provided
-            loss = None
-            if labels is not None:
-                logits = outputs.logits
-                shift_logits = logits[..., :-1, :].contiguous()
-                shift_labels = labels[..., 1:].contiguous()
-                loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
-                loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-            
-            return CausalLMOutputWithPast(
-                loss=loss,
-                logits=outputs.logits,
-                past_key_values=outputs.past_key_values,
-                hidden_states=outputs.hidden_states,
-                attentions=outputs.attentions,
-            )
-        
-        # Iterative processing following original CoCoNuT pattern
-        current_pos = 0
-        kv_cache = past_key_values
-        
-        for latent_pos in sorted_positions:
-            if latent_pos <= current_pos:
-                continue
-            
-            # Process sequence up to current latent token
-            if latent_pos > current_pos:
-                segment_inputs_embeds = inputs_embeds[:, current_pos:latent_pos, :]
-                segment_attention_mask = attention_mask[:, current_pos:latent_pos] if attention_mask is not None else None
-                segment_position_ids = position_ids[:, current_pos:latent_pos] if position_ids is not None else None
-                
-                # Forward pass for this segment
-                segment_outputs = self.base_model.language_model(
-                    inputs_embeds=segment_inputs_embeds,
-                    attention_mask=segment_attention_mask,
-                    position_ids=segment_position_ids,
-                    past_key_values=kv_cache,
-                    use_cache=True,
-                    output_hidden_states=True,
-                    return_dict=True
-                )
-                
-                # Update KV cache
-                kv_cache = segment_outputs.past_key_values
-                
-                # Extract last hidden state for continuous thought feedback
-                last_hidden_state = segment_outputs.last_hidden_state[:, -1, :]  # [batch_size, hidden_size]
-            else:
-                # Latent token at beginning - use zero hidden state
-                last_hidden_state = torch.zeros(batch_size, self.hidden_size, device=device, dtype=inputs_embeds.dtype)
-            
-            # Apply continuous thought feedback: replace latent token embeddings with hidden states
-            for batch_idx, positions in latent_positions_by_batch.items():
-                if latent_pos in positions:
-                    inputs_embeds[batch_idx, latent_pos, :] = last_hidden_state[batch_idx, :]
-            
-            current_pos = latent_pos + 1
-        
-        # Process remaining sequence after all latent tokens
-        if current_pos < seq_len:
-            remaining_inputs_embeds = inputs_embeds[:, current_pos:, :]
-            remaining_attention_mask = attention_mask[:, current_pos:] if attention_mask is not None else None
-            remaining_position_ids = position_ids[:, current_pos:] if position_ids is not None else None
-            
-            final_outputs = self.base_model.language_model(
-                inputs_embeds=remaining_inputs_embeds,
-                attention_mask=remaining_attention_mask,
-                position_ids=remaining_position_ids,
-                past_key_values=kv_cache,
-                use_cache=use_cache,
-                output_hidden_states=output_hidden_states,
-                output_attentions=output_attentions,
-                return_dict=True
-            )
-        else:
-            # No remaining sequence
-            final_outputs = type('DummyOutputs', (), {
-                'logits': torch.zeros(batch_size, 0, self.base_model.language_model.config.vocab_size, device=device),
-                'past_key_values': kv_cache,
-                'hidden_states': None,
-                'attentions': None
-            })()
+        Returns:
+            CausalLMOutputWithPast with standard outputs
+        """
+        outputs = self.base_model.language_model(
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
         
         # Compute loss if labels provided
         loss = None
-        if labels is not None and hasattr(final_outputs, 'logits') and final_outputs.logits.size(1) > 0:
-            shift_logits = final_outputs.logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., current_pos+1:].contiguous()
-            
-            if shift_labels.size(1) > 0:
-                loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
-                loss = loss_fct(
-                    shift_logits.view(-1, shift_logits.size(-1)),
-                    shift_labels.view(-1)
-                )
+        if labels is not None:
+            logits = outputs.logits
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
+            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
         
         return CausalLMOutputWithPast(
             loss=loss,
-            logits=final_outputs.logits if hasattr(final_outputs, 'logits') else None,
-            past_key_values=final_outputs.past_key_values,
-            hidden_states=final_outputs.hidden_states,
-            attentions=final_outputs.attentions,
+            logits=outputs.logits,
+            past_key_values=outputs.past_key_values,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
         )
     
     def generate(self,
