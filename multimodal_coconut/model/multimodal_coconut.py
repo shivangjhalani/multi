@@ -250,17 +250,16 @@ class MultimodalCoconut(nn.Module):
         for pass_idx in range(max_n_latents):
             
             if kv_cache is None:
-                # First forward pass 
+                # First forward pass (exactly like original CoCoNuT)
                 outputs = self.base_model.language_model(
                     inputs_embeds=inputs_embeds[:, next_compute_range[0]:next_compute_range[1], :],
                     attention_mask=attention_mask[:, next_compute_range[0]:next_compute_range[1]] if attention_mask is not None else None,
                     position_ids=position_ids[:, next_compute_range[0]:next_compute_range[1]] if position_ids is not None else None,
                     output_hidden_states=True,
-                    use_cache=True,
                 )
                 hidden_states_offset = 0
             else:
-                # Extract KV cache to reuse 
+                # Extract KV cache to reuse (exactly like original CoCoNuT)
                 past_key_values = [
                     (
                         k[:, :, :next_compute_range[0], :],
@@ -275,7 +274,6 @@ class MultimodalCoconut(nn.Module):
                     position_ids=position_ids[:, next_compute_range[0]:next_compute_range[1]] if position_ids is not None else None,
                     past_key_values=past_key_values,
                     output_hidden_states=True,
-                    use_cache=True,
                 )
                 hidden_states_offset = next_compute_range[0]
             
@@ -365,9 +363,10 @@ class MultimodalCoconut(nn.Module):
         
         loss = None
         if labels is not None:
+            # Follow original CoCoNuT loss calculation exactly
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
-            loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
+            loss_fct = nn.CrossEntropyLoss()
             loss = loss_fct(
                 shift_logits.view(-1, shift_logits.size(-1)),
                 shift_labels.view(-1)
