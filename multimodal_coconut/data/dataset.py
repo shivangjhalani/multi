@@ -357,8 +357,7 @@ def get_multimodal_dataset(data_path: str,
     
     return multimodal_dataset.dataset
 
-@datac
-lass
+@dataclass
 class MultimodalCollator:
     """
     Multimodal data collator that extends the original CoCoNuT collator
