@@ -10,6 +10,9 @@ import torch.nn as nn
 from typing import Dict, List, Optional, Tuple, Any
 from transformers import AutoModel, AutoTokenizer
 
+# Import Config from the config module
+from ..config import Config
+
 
 class LatentThoughtModule(nn.Module):
     """Module for generating and processing latent thoughts"""
