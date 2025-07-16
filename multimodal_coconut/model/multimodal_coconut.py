@@ -360,7 +360,7 @@ class MultimodalCoconut(nn.Module):
         )
     
     def _prepare_multimodal_embeddings(self,
-                                     pixel_values: torch.FloatTensor,
+                                     pixel_values: Optional[torch.FloatTensor],
                                      input_ids: torch.LongTensor,
                                      image_flags: Optional[torch.LongTensor] = None) -> torch.Tensor:
         """
@@ -370,7 +370,7 @@ class MultimodalCoconut(nn.Module):
         This is critical for multimodal CoCoNuT to work correctly.
         
         Args:
-            pixel_values: Image pixel values [total_patches, channels, height, width]
+            pixel_values: Image pixel values [total_patches, channels, height, width] (can be None)
             input_ids: Text token IDs [batch_size, sequence_length]
             image_flags: Flags indicating which samples have images [batch_size, 1]
             
@@ -389,9 +389,9 @@ class MultimodalCoconut(nn.Module):
         
         # Filter visual embeddings based on image flags
         if image_flags is not None:
-            image_flags = image_flags.squeeze(-1)
+            image_flags_squeezed = image_flags.squeeze(-1)
             # Create a boolean mask for filtering
-            valid_samples = image_flags == 1
+            valid_samples = image_flags_squeezed == 1
             if valid_samples.any():
                 # Only filter if we have valid samples
                 vit_embeds = vit_embeds[valid_samples]
