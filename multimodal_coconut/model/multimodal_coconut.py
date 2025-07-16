@@ -95,8 +95,8 @@ class MultimodalCoconut(nn.Module):
         return 64
     
     def forward(self,
-                pixel_values: torch.FloatTensor,
                 input_ids: torch.LongTensor,
+                pixel_values: Optional[torch.FloatTensor] = None,
                 attention_mask: Optional[torch.Tensor] = None,
                 position_ids: Optional[torch.LongTensor] = None,
                 image_flags: Optional[torch.LongTensor] = None,
@@ -140,8 +140,8 @@ class MultimodalCoconut(nn.Module):
         if len(latent_indices) == 0:
             # No latent tokens - use standard multimodal forward pass
             return self._standard_multimodal_forward(
-                pixel_values=pixel_values,
                 input_ids=input_ids,
+                pixel_values=pixel_values,
                 attention_mask=attention_mask,
                 position_ids=position_ids,
                 image_flags=image_flags,
@@ -156,8 +156,9 @@ class MultimodalCoconut(nn.Module):
         
         # Multimodal CoCoNuT forward pass with iterative processing
         return self._multimodal_forward_pass(
-            pixel_values=pixel_values,
             input_ids=input_ids,
+            latent_indices=latent_indices,
+            pixel_values=pixel_values,
             attention_mask=attention_mask,
             position_ids=position_ids,
             image_flags=image_flags,
@@ -167,14 +168,13 @@ class MultimodalCoconut(nn.Module):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
-            latent_indices=latent_indices,
             **kwargs
         )
     
     def _multimodal_forward_pass(self,
-                                pixel_values: torch.FloatTensor,
                                 input_ids: torch.LongTensor,
                                 latent_indices: torch.Tensor,
+                                pixel_values: Optional[torch.FloatTensor] = None,
                                 attention_mask: Optional[torch.Tensor] = None,
                                 position_ids: Optional[torch.LongTensor] = None,
                                 image_flags: Optional[torch.LongTensor] = None,
@@ -422,8 +422,8 @@ class MultimodalCoconut(nn.Module):
         return input_embeds
     
     def _standard_multimodal_forward(self,
-                                   pixel_values: torch.FloatTensor,
                                    input_ids: torch.LongTensor,
+                                   pixel_values: Optional[torch.FloatTensor] = None,
                                    attention_mask: Optional[torch.Tensor] = None,
                                    position_ids: Optional[torch.LongTensor] = None,
                                    image_flags: Optional[torch.LongTensor] = None,
@@ -495,11 +495,18 @@ class MultimodalCoconut(nn.Module):
         # Filter out parameters that InternVL3 doesn't expect
         filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ['num_patches_list']}
         
+        # Ensure image_flags is properly set for InternVL3
+        if image_flags is None and pixel_values is not None:
+            # Create default image_flags if not provided
+            batch_size = input_ids.shape[0]
+            image_flags = torch.ones(batch_size, 1, dtype=torch.long, device=input_ids.device)
+        
         return self.base_model(
             pixel_values=pixel_values,
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
+            image_flags=image_flags,
             past_key_values=past_key_values,
             labels=labels,
             use_cache=use_cache,
