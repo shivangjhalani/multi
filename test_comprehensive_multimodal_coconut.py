@@ -27,6 +27,7 @@ import numpy as np
 from pathlib import Path
 from PIL import Image
 from datasets import Dataset
+from transformers import AutoTokenizer, AutoModel
 
 # Import all multimodal CoCoNuT components
 from multimodal_coconut.config import Config, load_config, validate_config
@@ -38,7 +39,7 @@ from multimodal_coconut.data.dataset import (
     get_multimodal_question_latent_dataset
 )
 from multimodal_coconut.data.image_processor import ImageProcessor
-from multimodal_coconut.model.multimodal_coconut import MultimodalCoconut
+from multimodal_coconut.model.multimodal_coconut import MultimodalCoconut, load_multimodal_coconut_model
 from multimodal_coconut.training import (
     StageManager,
     MultimodalCoTTrainer,
@@ -82,102 +83,67 @@ class TestResults:
         return self.failed == 0
 
 
-# Mock components for testing
-class MockInternVL3Model(nn.Module):
-    """Comprehensive mock InternVL3 model"""    
-    def __init__(self, vocab_size=1000, hidden_size=128):
-        super().__init__()
-        self.language_model = MockLanguageModel(vocab_size, hidden_size)
-        self.vision_encoder = MockVisionEncoder()
-        self.img_context_token_id = 32000
+# Real model and tokenizer setup
+def setup_real_model_and_tokenizer():
+    """Setup real InternVL model and tokenizer for testing"""
+    try:
+        # Use a lightweight model for testing
+        model_id = "OpenGVLab/InternVL2-1B"
         
-        class MockConfig:
-            use_return_dict = True
-        self.config = MockConfig()
-    
-    def extract_feature(self, pixel_values):
-        """Extract visual features from images"""
-        if pixel_values is None:
-            return None
-        batch_size = pixel_values.shape[0]
-        return torch.randn(batch_size, 128)
-    
-    def forward(self, pixel_values=None, input_ids=None, labels=None, **kwargs):
-        if pixel_values is not None:
-            visual_features = self.extract_feature(pixel_values)
-        return self.language_model(input_ids=input_ids, labels=labels, **kwargs)
-
-
-class MockLanguageModel(nn.Module):
-    """Mock language model with proper transformer architecture"""
-    def __init__(self, vocab_size=1000, hidden_size=128):
-        super().__init__()
-        self.embeddings = nn.Embedding(vocab_size, hidden_size)
-        self.transformer = nn.TransformerDecoder(
-            nn.TransformerDecoderLayer(hidden_size, nhead=8, batch_first=True),
-            num_layers=2
+        print(f"Loading real InternVL model: {model_id}")
+        
+        # Load tokenizer
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_id,
+            trust_remote_code=True,
+            use_fast=False
         )
-        self.lm_head = nn.Linear(hidden_size, vocab_size)
-        self.loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
         
-        class MockConfig:
-            hidden_size = hidden_size
-            use_return_dict = True
-        self.config = MockConfig()
-    
-    def get_input_embeddings(self):
-        return self.embeddings
-    
-    def forward(self, input_ids=None, inputs_embeds=None, labels=None, 
-                attention_mask=None, past_key_values=None, output_hidden_states=False, **kwargs):
+        # Add CoCoNuT special tokens
+        special_tokens = ["<|start-latent|>", "<|end-latent|>", "<|latent|>"]
+        tokenizer.add_tokens(special_tokens)
         
-        if inputs_embeds is not None:
-            hidden_states = inputs_embeds
-        else:
-            hidden_states = self.embeddings(input_ids)
+        # Get special token IDs
+        start_latent_id = tokenizer.convert_tokens_to_ids("<|start-latent|>")
+        end_latent_id = tokenizer.convert_tokens_to_ids("<|end-latent|>")
+        latent_id = tokenizer.convert_tokens_to_ids("<|latent|>")
         
-        batch_size, seq_len, hidden_size = hidden_states.shape
+        # Add missing attributes for compatibility
+        tokenizer.latent_token_id = latent_id
+        tokenizer.start_latent_id = start_latent_id
+        tokenizer.end_latent_id = end_latent_id
         
-        # Create causal mask
-        tgt_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()
+        # Load base model (CPU only for testing)
+        base_model = AutoModel.from_pretrained(
+            model_id,
+            trust_remote_code=True,
+            torch_dtype=torch.float32,  # Use float32 for CPU
+            low_cpu_mem_usage=True,
+            device_map="cpu"
+        )
         
-        # Simple transformer processing
-        memory = hidden_states
-        output = self.transformer(hidden_states, memory, tgt_mask=tgt_mask)
-        logits = self.lm_head(output)
+        # Resize token embeddings
+        old_vocab_size = base_model.language_model.config.vocab_size
+        new_vocab_size = len(tokenizer)
         
-        # Calculate loss
-        loss = None
-        if labels is not None:
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            loss = self.loss_fn(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+        if new_vocab_size > old_vocab_size:
+            base_model.language_model.resize_token_embeddings(new_vocab_size)
         
-        class MockOutput:
-            def __init__(self, loss, logits, hidden_states=None, past_key_values=None):
-                self.loss = loss
-                self.logits = logits
-                self.hidden_states = [hidden_states] if output_hidden_states else None
-                self.past_key_values = past_key_values
-                self.attentions = None
+        print(f"✓ Real model loaded successfully")
+        print(f"  - Vocab size: {old_vocab_size} -> {new_vocab_size}")
+        print(f"  - Special tokens: start={start_latent_id}, latent={latent_id}, end={end_latent_id}")
         
-        return MockOutput(loss, logits, output, past_key_values)
+        return base_model, tokenizer
+        
+    except Exception as e:
+        print(f"⚠️  Failed to load real model: {e}")
+        print("Falling back to mock components...")
+        return None, None
 
 
-class MockVisionEncoder(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.conv = nn.Conv2d(3, 128, kernel_size=3, padding=1)
-        self.pool = nn.AdaptiveAvgPool2d((1, 1))
-    
-    def forward(self, pixel_values):
-        x = self.conv(pixel_values)
-        x = self.pool(x)
-        return x.flatten(1)
-
-
+# Fallback mock components (simplified)
 class MockTokenizer:
-    """Enhanced mock tokenizer with full vocabulary"""
+    """Simplified mock tokenizer with essential methods"""
     def __init__(self):
         self.pad_token_id = 0
         self.eos_token_id = 2
@@ -185,38 +151,71 @@ class MockTokenizer:
         self.start_latent_id = 100
         self.end_latent_id = 102
         self.padding_side = "right"
+    
+    def pad(self, encoded_inputs, padding=True, max_length=None, return_tensors=None):
+        """Simple padding implementation"""
+        if not isinstance(encoded_inputs, list):
+            encoded_inputs = [encoded_inputs]
         
-        # Comprehensive vocabulary
-        self.vocab = {
-            '<pad>': 0, '<unk>': 1, '<eos>': 2, '<img>': 3, '</img>': 4,
-            '<IMG_CONTEXT>': 32000, '<|start-latent|>': 100, '<|latent|>': 101, '<|end-latent|>': 102,
-            'what': 10, 'is': 11, 'in': 12, 'the': 13, 'image': 14, 'answer': 15, 'step': 16,
-            'this': 17, 'shows': 18, 'can': 19, 'see': 20, 'based': 21, 'on': 22, 'visual': 23
-        }
+        if max_length is None:
+            max_length = max(len(seq['input_ids']) for seq in encoded_inputs)
+        
+        padded = []
+        for seq in encoded_inputs:
+            input_ids = seq['input_ids']
+            attention_mask = seq.get('attention_mask', [1] * len(input_ids))
+            
+            # Pad sequences
+            pad_length = max_length - len(input_ids)
+            if pad_length > 0:
+                input_ids = input_ids + [self.pad_token_id] * pad_length
+                attention_mask = attention_mask + [0] * pad_length
+            
+            padded.append({
+                'input_ids': input_ids,
+                'attention_mask': attention_mask
+            })
+        
+        if return_tensors == "pt":
+            return {
+                'input_ids': torch.tensor([seq['input_ids'] for seq in padded]),
+                'attention_mask': torch.tensor([seq['attention_mask'] for seq in padded])
+            }
+        
+        return padded
     
     def encode(self, text, add_special_tokens=False):
+        # Simple word-based tokenization
         words = text.lower().split()
         tokens = []
         
-        if add_special_tokens:
-            tokens.append(1)
-        
         for word in words:
-            if word in self.vocab:
-                tokens.append(self.vocab[word])
-            else:
-                tokens.append(hash(word) % 900 + 50)
-        
-        if add_special_tokens:
-            tokens.append(self.eos_token_id)
+            # Simple hash-based token assignment
+            tokens.append(hash(word) % 1000 + 10)
         
         return tokens
     
-    def decode(self, token_id):
-        for word, id in self.vocab.items():
-            if id == token_id:
-                return word
-        return f"token_{token_id}"
+    def __call__(self, text, return_tensors=None, padding=False, truncation=False, max_length=None):
+        if isinstance(text, str):
+            text = [text]
+        
+        encoded = []
+        for t in text:
+            tokens = self.encode(t)
+            encoded.append({
+                'input_ids': tokens,
+                'attention_mask': [1] * len(tokens)
+            })
+        
+        if padding:
+            encoded = self.pad(encoded, max_length=max_length, return_tensors=return_tensors)
+        elif return_tensors == "pt" and len(encoded) == 1:
+            return {
+                'input_ids': torch.tensor([encoded[0]['input_ids']]),
+                'attention_mask': torch.tensor([encoded[0]['attention_mask']])
+            }
+        
+        return encoded[0] if len(encoded) == 1 else encoded
 
 
 def create_comprehensive_test_data(temp_dir):
