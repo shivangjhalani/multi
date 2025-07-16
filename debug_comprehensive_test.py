@@ -210,7 +210,7 @@ def debug_model_forward_issue():
         
         try:
             # Remove problematic parameters
-            forward_batch = {k: v for k, v in batch.items() if k not in ['idx', 'num_patches_list']}
+            forward_batch = {k: v for k, v in batch.items() if k not in ['idx', 'num_patches_list', '_num_patches_list']}
             
             print(f"Forward batch keys: {list(forward_batch.keys())}")
             
@@ -356,8 +356,8 @@ def debug_trainer_integration_issue():
         print(f"\n🚀 Attempting forward pass with trainer batch...")
         
         try:
-            # Remove idx if present
-            forward_batch = {k: v for k, v in batch.items() if k != "idx"}
+            # Remove idx and internal parameters if present
+            forward_batch = {k: v for k, v in batch.items() if k not in ["idx", "_num_patches_list"]}
             
             model.train()
             outputs = model(**forward_batch)

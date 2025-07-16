@@ -493,7 +493,7 @@ class MultimodalCoconut(nn.Module):
         
         # For multimodal inputs, use the full InternVL3 model
         # Filter out parameters that InternVL3 doesn't expect
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ['num_patches_list']}
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ['num_patches_list', '_num_patches_list']}
         
         # Ensure image_flags is properly set for InternVL3
         if image_flags is None and pixel_values is not None:
