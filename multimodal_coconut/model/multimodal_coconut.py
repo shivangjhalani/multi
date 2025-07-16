@@ -697,7 +697,7 @@ class MultimodalCoconut(nn.Module):
             device = next(self.parameters()).device
         except StopIteration:
             # Fallback for test mocks or models without parameters
-            printf("Warning: No parameters found in model, fallback to cpu")
+            print()"Warning: No parameters found in model, fallback to cpu")
             device = torch.device('cpu')
         
         input_ids = model_inputs['input_ids'].to(device)
