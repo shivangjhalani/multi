@@ -392,7 +392,7 @@ class MultimodalCoconut(nn.Module):
             image_flags_squeezed = image_flags.squeeze(-1)
             # Create a boolean mask for filtering
             valid_samples = image_flags_squeezed == 1
-            if valid_samples.any():
+            if torch.is_tensor(valid_samples) and valid_samples.any():
                 # Only filter if we have valid samples
                 vit_embeds = vit_embeds[valid_samples]
         
@@ -408,17 +408,17 @@ class MultimodalCoconut(nn.Module):
             if selected.sum() > 0:
                 try:
                     vit_embeds_flat = vit_embeds.reshape(-1, C)
-                    input_embeds[selected] = input_embeds[selected] * 0.0 + vit_embeds_flat
+                    input_embeds[selected] = input_embeds[selected] * 0.0 + vit_embeds_flat.to(input_embeds.device)
                 except Exception as e:
                     # Handle shape mismatch gracefully
                     n_token = selected.sum()
                     vit_embeds_flat = vit_embeds.reshape(-1, C)
                     if n_token <= vit_embeds_flat.shape[0]:
-                        input_embeds[selected] = input_embeds[selected] * 0.0 + vit_embeds_flat[:n_token]
+                        input_embeds[selected] = input_embeds[selected] * 0.0 + vit_embeds_flat[:n_token].to(input_embeds.device)
                     else:
                         # If we don't have enough visual tokens, repeat the last one
                         repeated_embeds = vit_embeds_flat[-1:].repeat(n_token, 1)
-                        input_embeds[selected] = input_embeds[selected] * 0.0 + repeated_embeds
+                        input_embeds[selected] = input_embeds[selected] * 0.0 + repeated_embeds.to(input_embeds.device)
         
         # Reshape back to original dimensions
         input_embeds = input_embeds.reshape(B, N, C)
