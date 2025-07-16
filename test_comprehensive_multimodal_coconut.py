@@ -84,8 +84,8 @@ class TestResults:
 
 # Mock components for testing
 class MockInternVL3Model(nn.Module):
-    """Comprehensive mock InternVL3 model"""    def __in
-it__(self, vocab_size=1000, hidden_size=128):
+    """Comprehensive mock InternVL3 model"""    
+    def __init__(self, vocab_size=1000, hidden_size=128):
         super().__init__()
         self.language_model = MockLanguageModel(vocab_size, hidden_size)
         self.vision_encoder = MockVisionEncoder()
