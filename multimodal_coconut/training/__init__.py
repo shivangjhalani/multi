@@ -1,17 +1,22 @@
 """
 Training module for Multimodal CoCoNuT
 
-This module contains all training-related components including:
-- Stage management for curriculum learning
-- Training loops and optimization
-- Validation and evaluation logic
+This module contains the staged training curriculum system and related utilities
+for training multimodal CoCoNuT models.
 """
 
-from .stage_manager import StageManager, create_stage_manager, get_scheduled_stage, get_stage_data_params
+from .stage_manager import (
+    StageManager,
+    StageInfo,
+    create_stage_manager,
+    get_scheduled_stage,
+    get_stage_data_params
+)
 
 __all__ = [
     'StageManager',
-    'create_stage_manager', 
+    'StageInfo', 
+    'create_stage_manager',
     'get_scheduled_stage',
     'get_stage_data_params'
 ]

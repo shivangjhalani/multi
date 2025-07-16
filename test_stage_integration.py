@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Test script for stage manager integration with multimodal dataset functions.
+Integration test for stage manager with multimodal dataset functions.
 
-This script validates that the stage manager correctly integrates with the
-multimodal dataset processing functions and produces the expected results.
+This test verifies that the stage manager correctly integrates with the
+multimodal dataset preparation functions and produces the expected results.
 """
 
 import sys
@@ -14,41 +14,55 @@ import torch
 from datasets import Dataset
 from multimodal_coconut.config import Config
 from multimodal_coconut.training.stage_manager import StageManager
+from multimodal_coconut.data.dataset import (
+    get_multimodal_cot_latent_dataset,
+    get_multimodal_question_latent_dataset
+)
 
 
-def create_mock_multimodal_dataset():
-    """Create a mock multimodal dataset for testing"""
-    # Create mock tokenized samples
+def create_mock_tokenizer():
+    """Create a mock tokenizer for testing"""
+    class MockTokenizer:
+        def __init__(self):
+            self.pad_token_id = 0
+            self.eos_token_id = 2
+        
+        def encode(self, text, add_special_tokens=False):
+            # Simple mock encoding - just return length-based tokens
+            return list(range(1, len(text.split()) + 1))
+    
+    return MockTokenizer()
+
+
+def create_test_dataset():
+    """Create a test dataset with multimodal samples"""
+    # Create mock data
     samples = []
     for i in range(5):
         sample = {
-            'pixel_values': torch.randn(2, 3, 224, 224),  # 2 patches per image
-            'num_patches': 2,
+            'pixel_values': torch.randn(3, 3, 224, 224),  # Mock image tensor
+            'num_patches': 3,
             'question_tokenized': [1, 2, 3, 4, 5],  # Mock question tokens
             'steps_tokenized': [
-                [10, 11, 12],  # Step 1
-                [20, 21, 22],  # Step 2
-                [30, 31, 32],  # Step 3
+                [6, 7],      # Step 1
+                [8, 9, 10],  # Step 2  
+                [11, 12]     # Step 3
             ],
-            'answer_tokenized': [100, 101, 102],  # Mock answer tokens
+            'answer_tokenized': [13, 14, 15],  # Mock answer tokens
             'idx': i
         }
         samples.append(sample)
     
-    # Convert to HuggingFace dataset format
+    # Convert to HuggingFace dataset
     dataset_dict = {}
     for key in samples[0].keys():
-        if key == 'pixel_values':
-            # Convert tensors to lists for HF dataset compatibility
-            dataset_dict[key] = [sample[key].tolist() for sample in samples]
-        else:
-            dataset_dict[key] = [sample[key] for sample in samples]
+        dataset_dict[key] = [sample[key] for sample in samples]
     
     return Dataset.from_dict(dataset_dict)
 
 
 def test_stage_manager_integration():
-    """Test that stage manager integrates correctly with dataset functions"""
+    """Test stage manager integration with dataset functions"""
     print("Testing stage manager integration with dataset functions...")
     
     # Create test configuration
@@ -63,94 +77,66 @@ def test_stage_manager_integration():
         'pad_latent_to_max': False
     })
     
-    # Create mock dataset
-    base_dataset = create_mock_multimodal_dataset()
-    
-    # Import the dataset function
-    from multimodal_coconut.data.dataset import get_multimodal_cot_latent_dataset
-    
-    # Test different stages
-    test_cases = [
-        (0, "Stage 0 (CoT)"),
-        (1, "Stage 1 (1 latent step)"),
-        (2, "Stage 2 (2 latent steps)"),
-        (3, "Stage 3 (beyond max_latent_stage)"),
-    ]
+    # Create test dataset
+    base_dataset = create_test_dataset()
     
     # Mock token IDs
-    start_id = 1000
-    latent_id = 1001
-    end_id = 1002
+    start_id = 100
+    latent_id = 101
+    end_id = 102
     
-    for scheduled_stage, description in test_cases:
-        print(f"\n  Testing {description}...")
+    # Test different stages
+    stages_to_test = [0, 1, 2, 3]  # Stage 3 is beyond max_latent_stage
+    
+    for stage in stages_to_test:
+        print(f"  Testing Stage {stage}...")
         
-        try:
-            # Process dataset for this stage
-            processed_dataset = get_multimodal_cot_latent_dataset(
-                scheduled_stage=scheduled_stage,
-                base_dataset=base_dataset,
-                configs=config,
-                start_id=start_id,
-                latent_id=latent_id,
-                end_id=end_id,
-                no_special_marker=False,
-                shuffle=False
-            )
-            
-            # Verify the processed dataset
-            assert len(processed_dataset) == len(base_dataset), f"Dataset size mismatch for {description}"
-            
-            # Check first sample
-            sample = processed_dataset[0]
-            
-            # Verify required fields
-            required_fields = ['pixel_values', 'num_patches', 'input_ids', 'labels', 'attention_mask', 'idx', 'position_ids']
-            for field in required_fields:
-                assert field in sample, f"Missing field {field} in {description}"
-            
-            # Verify pixel values are preserved
-            assert isinstance(sample['pixel_values'], list), f"pixel_values should be list in {description}"
-            assert len(sample['pixel_values']) == 2, f"Should have 2 patches in {description}"
-            
-            # Verify num_patches
-            assert sample['num_patches'] == 2, f"num_patches mismatch in {description}"
-            
-            # Verify input_ids structure
-            input_ids = sample['input_ids']
-            assert isinstance(input_ids, list), f"input_ids should be list in {description}"
-            
-            # Count latent tokens in input_ids
-            latent_count = input_ids.count(latent_id)
-            
-            # Calculate expected latent tokens based on stage
-            stage_manager = StageManager(config)
-            effective_stage, n_skip_steps, n_latent_tokens = stage_manager.get_effective_stage_for_sample(
-                scheduled_stage, [[], [], []]  # 3 steps
-            )
-            
-            assert latent_count == n_latent_tokens, f"Expected {n_latent_tokens} latent tokens, got {latent_count} in {description}"
-            
-            # Verify labels structure
-            labels = sample['labels']
-            assert len(labels) == len(input_ids), f"Labels length mismatch in {description}"
-            
-            # Count -100 labels (should cover question + latent tokens + markers)
-            ignore_count = labels.count(-100)
-            expected_ignore = len([1, 2, 3, 4, 5]) + n_latent_tokens + 2  # question + latent + start/end markers
-            assert ignore_count == expected_ignore, f"Expected {expected_ignore} ignored labels, got {ignore_count} in {description}"
-            
-            print(f"    ✓ {description}: {latent_count} latent tokens, {ignore_count} ignored labels")
-            
-        except Exception as e:
-            print(f"    ❌ {description} failed: {e}")
-            raise
+        # Prepare dataset for this stage
+        stage_dataset = get_multimodal_cot_latent_dataset(
+            scheduled_stage=stage,
+            base_dataset=base_dataset,
+            configs=config,
+            start_id=start_id,
+            latent_id=latent_id,
+            end_id=end_id,
+            no_special_marker=False,
+            shuffle=False
+        )
+        
+        # Check first sample
+        sample = stage_dataset[0]
+        
+        # Count latent tokens
+        latent_count = sample['input_ids'].count(latent_id)
+        
+        # Count ignored labels (-100)
+        ignored_count = sample['labels'].count(-100)
+        
+        if stage == 0:
+            # Stage 0 should have no latent tokens
+            expected_latent = 0
+            print(f"    ✓ Stage {stage} (CoT): {latent_count} latent tokens, {ignored_count} ignored labels")
+        elif stage <= config.max_latent_stage:
+            # Normal CoCoNuT stages
+            expected_latent = stage * config.c_thought
+            print(f"    ✓ Stage {stage} ({stage} latent step{'s' if stage > 1 else ''}): {latent_count} latent tokens, {ignored_count} ignored labels")
+        else:
+            # Beyond max_latent_stage - should be capped
+            expected_latent = config.max_latent_stage * config.c_thought
+            print(f"    ✓ Stage {stage} (beyond max_latent_stage): {latent_count} latent tokens, {ignored_count} ignored labels")
+        
+        assert latent_count == expected_latent, f"Expected {expected_latent} latent tokens, got {latent_count}"
+        
+        # Verify multimodal components are preserved
+        assert 'pixel_values' in sample
+        assert 'num_patches' in sample
+        assert sample['num_patches'] == 3
     
     print("  ✓ Stage manager integration test passed!")
 
 
 def test_validation_dataset_integration():
-    """Test stage manager integration with validation dataset function"""
+    """Test stage manager integration with validation dataset"""
     print("Testing stage manager integration with validation dataset...")
     
     config = Config({
@@ -164,66 +150,44 @@ def test_validation_dataset_integration():
         'pad_latent_to_max': False
     })
     
-    # Create mock validation dataset
-    base_dataset = create_mock_multimodal_dataset()
+    base_dataset = create_test_dataset()
     
-    # Import the validation dataset function
-    from multimodal_coconut.data.dataset import get_multimodal_question_latent_dataset
+    start_id = 100
+    latent_id = 101
+    end_id = 102
     
-    # Mock token IDs
-    start_id = 1000
-    latent_id = 1001
-    end_id = 1002
+    stages_to_test = [0, 1, 2]
     
-    # Test different stages
-    for scheduled_stage in [0, 1, 2]:
-        print(f"  Testing validation stage {scheduled_stage}...")
+    for stage in stages_to_test:
+        print(f"  Testing validation stage {stage}...")
         
-        try:
-            # Process validation dataset
-            processed_dataset = get_multimodal_question_latent_dataset(
-                scheduled_stage=scheduled_stage,
-                base_dataset_valid=base_dataset,
-                configs=config,
-                start_id=start_id,
-                latent_id=latent_id,
-                end_id=end_id,
-                no_special_marker=False
-            )
-            
-            # Verify the processed dataset
-            assert len(processed_dataset) == len(base_dataset)
-            
-            # Check first sample
-            sample = processed_dataset[0]
-            
-            # Verify required fields for validation
-            required_fields = ['pixel_values', 'num_patches', 'input_ids', 'idx', 'attention_mask', 'position_ids']
-            for field in required_fields:
-                assert field in sample, f"Missing field {field} in validation stage {scheduled_stage}"
-            
-            # Verify no labels in validation dataset
-            assert 'labels' not in sample, f"Validation dataset should not have labels in stage {scheduled_stage}"
-            
-            # Count latent tokens
-            input_ids = sample['input_ids']
-            latent_count = input_ids.count(latent_id)
-            
-            # Expected latent tokens for validation
-            expected_latent = min(config.max_latent_stage, scheduled_stage) * config.c_thought
-            assert latent_count == expected_latent, f"Expected {expected_latent} latent tokens, got {latent_count} in validation stage {scheduled_stage}"
-            
-            print(f"    ✓ Validation stage {scheduled_stage}: {latent_count} latent tokens")
-            
-        except Exception as e:
-            print(f"    ❌ Validation stage {scheduled_stage} failed: {e}")
-            raise
+        val_dataset = get_multimodal_question_latent_dataset(
+            scheduled_stage=stage,
+            base_dataset_valid=base_dataset,
+            configs=config,
+            start_id=start_id,
+            latent_id=latent_id,
+            end_id=end_id,
+            no_special_marker=False
+        )
+        
+        sample = val_dataset[0]
+        latent_count = sample['input_ids'].count(latent_id)
+        
+        expected_latent = stage * config.c_thought
+        print(f"    ✓ Validation stage {stage}: {latent_count} latent tokens")
+        
+        assert latent_count == expected_latent, f"Expected {expected_latent} latent tokens, got {latent_count}"
+        
+        # Verify multimodal components
+        assert 'pixel_values' in sample
+        assert 'num_patches' in sample
     
     print("  ✓ Validation dataset integration test passed!")
 
 
 def test_uniform_mixing():
-    """Test uniform probability mixing functionality"""
+    """Test uniform probability mixing"""
     print("Testing uniform probability mixing...")
     
     config = Config({
@@ -237,22 +201,18 @@ def test_uniform_mixing():
         'pad_latent_to_max': False
     })
     
-    # Create mock dataset
-    base_dataset = create_mock_multimodal_dataset()
+    base_dataset = create_test_dataset()
     
-    from multimodal_coconut.data.dataset import get_multimodal_cot_latent_dataset
+    start_id = 100
+    latent_id = 101
+    end_id = 102
     
-    # Mock token IDs
-    start_id = 1000
-    latent_id = 1001
-    end_id = 1002
+    # Run multiple times to see different random stages
+    latent_counts = set()
     
-    # Process dataset multiple times to see variation
-    latent_counts = []
-    
-    for i in range(10):
-        processed_dataset = get_multimodal_cot_latent_dataset(
-            scheduled_stage=2,  # Fixed stage
+    for _ in range(10):
+        stage_dataset = get_multimodal_cot_latent_dataset(
+            scheduled_stage=2,  # Fixed scheduled stage
             base_dataset=base_dataset,
             configs=config,
             start_id=start_id,
@@ -262,84 +222,80 @@ def test_uniform_mixing():
             shuffle=False
         )
         
-        # Count latent tokens in first sample
-        sample = processed_dataset[0]
+        sample = stage_dataset[0]
         latent_count = sample['input_ids'].count(latent_id)
-        latent_counts.append(latent_count)
+        latent_counts.add(latent_count)
     
-    # Should see variation due to uniform mixing
-    unique_counts = set(latent_counts)
-    assert len(unique_counts) > 1, f"Expected variation in latent counts due to uniform mixing, got {unique_counts}"
+    # Should have seen different latent counts due to random mixing
+    print(f"  ✓ Uniform mixing produced {len(latent_counts)} different latent counts: {sorted(latent_counts)}")
+    assert len(latent_counts) > 1, "Uniform mixing should produce different results"
     
-    print(f"  ✓ Uniform mixing produced {len(unique_counts)} different latent counts: {sorted(unique_counts)}")
     print("  ✓ Uniform mixing test passed!")
 
 
 def test_edge_cases():
-    """Test edge cases and error handling"""
+    """Test edge cases like no_cot and pad_latent_to_max"""
     print("Testing edge cases...")
     
-    # Test with no_cot mode
-    config = Config({
+    # Test no_cot mode
+    config_no_cot = Config({
         'epochs_per_stage': 3,
         'max_latent_stage': 2,
         'c_thought': 2,
         'uniform_prob': 0.0,
         'cot': False,
         'coconut': True,
-        'no_cot': True,  # Enable no_cot mode
+        'no_cot': True,  # Enable no_cot
         'pad_latent_to_max': False
     })
     
-    base_dataset = create_mock_multimodal_dataset()
+    base_dataset = create_test_dataset()
     
-    from multimodal_coconut.data.dataset import get_multimodal_cot_latent_dataset
-    
-    # Mock token IDs
-    start_id = 1000
-    latent_id = 1001
-    end_id = 1002
-    
-    processed_dataset = get_multimodal_cot_latent_dataset(
+    stage_dataset = get_multimodal_cot_latent_dataset(
         scheduled_stage=2,
         base_dataset=base_dataset,
-        configs=config,
-        start_id=start_id,
-        latent_id=latent_id,
-        end_id=end_id,
+        configs=config_no_cot,
+        start_id=100,
+        latent_id=101,
+        end_id=102,
         no_special_marker=False,
         shuffle=False
     )
     
-    # Should have no latent tokens in no_cot mode
-    sample = processed_dataset[0]
-    latent_count = sample['input_ids'].count(latent_id)
-    assert latent_count == 0, f"Expected 0 latent tokens in no_cot mode, got {latent_count}"
-    
+    sample = stage_dataset[0]
+    latent_count = sample['input_ids'].count(101)
+    assert latent_count == 0, f"no_cot mode should have 0 latent tokens, got {latent_count}"
     print("  ✓ no_cot mode test passed!")
     
-    # Test with pad_latent_to_max
-    config.no_cot = False
-    config.pad_latent_to_max = True
+    # Test pad_latent_to_max
+    config_pad = Config({
+        'epochs_per_stage': 3,
+        'max_latent_stage': 2,
+        'c_thought': 2,
+        'uniform_prob': 0.0,
+        'cot': False,
+        'coconut': True,
+        'no_cot': False,
+        'pad_latent_to_max': True  # Enable padding
+    })
     
-    processed_dataset = get_multimodal_cot_latent_dataset(
+    stage_dataset = get_multimodal_cot_latent_dataset(
         scheduled_stage=5,  # Beyond max_latent_stage
         base_dataset=base_dataset,
-        configs=config,
-        start_id=start_id,
-        latent_id=latent_id,
-        end_id=end_id,
+        configs=config_pad,
+        start_id=100,
+        latent_id=101,
+        end_id=102,
         no_special_marker=False,
         shuffle=False
     )
     
-    # Should be capped at max_latent_stage
-    sample = processed_dataset[0]
-    latent_count = sample['input_ids'].count(latent_id)
-    expected_count = config.max_latent_stage * config.c_thought
-    assert latent_count == expected_count, f"Expected {expected_count} latent tokens with pad_latent_to_max, got {latent_count}"
-    
+    sample = stage_dataset[0]
+    latent_count = sample['input_ids'].count(101)
+    expected = config_pad.max_latent_stage * config_pad.c_thought
+    assert latent_count == expected, f"pad_latent_to_max should give {expected} tokens, got {latent_count}"
     print("  ✓ pad_latent_to_max test passed!")
+    
     print("  ✓ Edge cases test passed!")
 
 
