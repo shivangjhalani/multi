@@ -39,7 +39,7 @@ from multimodal_coconut.data.dataset import (
     get_multimodal_question_latent_dataset
 )
 from multimodal_coconut.data.image_processor import ImageProcessor
-from multimodal_coconut.model.multimodal_coconut import MultimodalCoconut, load_multimodal_coconut_model
+from multimodal_coconut.model.multimodal_coconut import MultimodalCoconut, create_multimodal_coconut_model
 from multimodal_coconut.training import (
     StageManager,
     MultimodalCoTTrainer,
