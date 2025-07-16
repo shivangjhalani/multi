@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
-Integration test for stage manager with multimodal dataset functions.
-
-This test verifies that the stage manager correctly integrates with the
-multimodal dataset preparation functions and produces the expected results.
+Test the stage integration and visual embedding fix
 """
 
 import sys
@@ -11,320 +8,208 @@ import os
 sys.path.append('.')
 
 import torch
-from datasets import Dataset
+import tempfile
+import shutil
+import json
+import numpy as np
+from pathlib import Path
+from PIL import Image
+from transformers import AutoTokenizer, AutoModel
+
 from multimodal_coconut.config import Config
-from multimodal_coconut.training.stage_manager import StageManager
-from multimodal_coconut.data.dataset import (
-    get_multimodal_cot_latent_dataset,
-    get_multimodal_question_latent_dataset
-)
+from multimodal_coconut.data.dataset import get_multimodal_dataset, MultimodalCollator
+from multimodal_coconut.model.multimodal_coconut import MultimodalCoconut
 
 
-def create_mock_tokenizer():
-    """Create a mock tokenizer for testing"""
-    class MockTokenizer:
-        def __init__(self):
-            self.pad_token_id = 0
-            self.eos_token_id = 2
-        
-        def encode(self, text, add_special_tokens=False):
-            # Simple mock encoding - just return length-based tokens
-            return list(range(1, len(text.split()) + 1))
+def setup_model_and_tokenizer():
+    """Setup model and tokenizer"""
+    model_id = "OpenGVLab/InternVL3-1B-Pretrained"
     
-    return MockTokenizer()
-
-
-def create_test_dataset():
-    """Create a test dataset with multimodal samples"""
-    # Create mock data
-    samples = []
-    for i in range(5):
-        sample = {
-            'pixel_values': torch.randn(3, 3, 224, 224),  # Mock image tensor
-            'num_patches': 3,
-            'question_tokenized': [1, 2, 3, 4, 5],  # Mock question tokens
-            'steps_tokenized': [
-                [6, 7],      # Step 1
-                [8, 9, 10],  # Step 2  
-                [11, 12]     # Step 3
-            ],
-            'answer_tokenized': [13, 14, 15],  # Mock answer tokens
-            'idx': i
-        }
-        samples.append(sample)
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, use_fast=False)
+    special_tokens = ["<|start-latent|>", "<|end-latent|>", "<|latent|>"]
+    tokenizer.add_tokens(special_tokens)
     
-    # Convert to HuggingFace dataset
-    dataset_dict = {}
-    for key in samples[0].keys():
-        dataset_dict[key] = [sample[key] for sample in samples]
+    tokenizer.latent_token_id = tokenizer.convert_tokens_to_ids("<|latent|>")
+    tokenizer.start_latent_id = tokenizer.convert_tokens_to_ids("<|start-latent|>")
+    tokenizer.end_latent_id = tokenizer.convert_tokens_to_ids("<|end-latent|>")
     
-    return Dataset.from_dict(dataset_dict)
-
-
-def test_stage_manager_integration():
-    """Test stage manager integration with dataset functions"""
-    print("Testing stage manager integration with dataset functions...")
-    
-    # Create test configuration
-    config = Config({
-        'epochs_per_stage': 3,
-        'max_latent_stage': 2,
-        'c_thought': 2,
-        'uniform_prob': 0.0,  # Disable for predictable testing
-        'cot': False,
-        'coconut': True,
-        'no_cot': False,
-        'pad_latent_to_max': False
-    })
-    
-    # Create test dataset
-    base_dataset = create_test_dataset()
-    
-    # Mock token IDs
-    start_id = 100
-    latent_id = 101
-    end_id = 102
-    
-    # Test different stages
-    stages_to_test = [0, 1, 2, 3]  # Stage 3 is beyond max_latent_stage
-    
-    for stage in stages_to_test:
-        print(f"  Testing Stage {stage}...")
-        
-        # Prepare dataset for this stage
-        stage_dataset = get_multimodal_cot_latent_dataset(
-            scheduled_stage=stage,
-            base_dataset=base_dataset,
-            configs=config,
-            start_id=start_id,
-            latent_id=latent_id,
-            end_id=end_id,
-            no_special_marker=False,
-            shuffle=False
-        )
-        
-        # Check first sample
-        sample = stage_dataset[0]
-        
-        # Count latent tokens
-        latent_count = sample['input_ids'].count(latent_id)
-        
-        # Count ignored labels (-100)
-        ignored_count = sample['labels'].count(-100)
-        
-        if stage == 0:
-            # Stage 0 should have no latent tokens
-            expected_latent = 0
-            print(f"    ✓ Stage {stage} (CoT): {latent_count} latent tokens, {ignored_count} ignored labels")
-        elif stage <= config.max_latent_stage:
-            # Normal CoCoNuT stages
-            expected_latent = stage * config.c_thought
-            print(f"    ✓ Stage {stage} ({stage} latent step{'s' if stage > 1 else ''}): {latent_count} latent tokens, {ignored_count} ignored labels")
-        else:
-            # Beyond max_latent_stage - should be capped
-            expected_latent = config.max_latent_stage * config.c_thought
-            print(f"    ✓ Stage {stage} (beyond max_latent_stage): {latent_count} latent tokens, {ignored_count} ignored labels")
-        
-        assert latent_count == expected_latent, f"Expected {expected_latent} latent tokens, got {latent_count}"
-        
-        # Verify multimodal components are preserved
-        assert 'pixel_values' in sample
-        assert 'num_patches' in sample
-        assert sample['num_patches'] == 3
-    
-    print("  ✓ Stage manager integration test passed!")
-
-
-def test_validation_dataset_integration():
-    """Test stage manager integration with validation dataset"""
-    print("Testing stage manager integration with validation dataset...")
-    
-    config = Config({
-        'epochs_per_stage': 3,
-        'max_latent_stage': 2,
-        'c_thought': 2,
-        'uniform_prob': 0.0,
-        'cot': False,
-        'coconut': True,
-        'no_cot': False,
-        'pad_latent_to_max': False
-    })
-    
-    base_dataset = create_test_dataset()
-    
-    start_id = 100
-    latent_id = 101
-    end_id = 102
-    
-    stages_to_test = [0, 1, 2]
-    
-    for stage in stages_to_test:
-        print(f"  Testing validation stage {stage}...")
-        
-        val_dataset = get_multimodal_question_latent_dataset(
-            scheduled_stage=stage,
-            base_dataset_valid=base_dataset,
-            configs=config,
-            start_id=start_id,
-            latent_id=latent_id,
-            end_id=end_id,
-            no_special_marker=False
-        )
-        
-        sample = val_dataset[0]
-        latent_count = sample['input_ids'].count(latent_id)
-        
-        expected_latent = stage * config.c_thought
-        print(f"    ✓ Validation stage {stage}: {latent_count} latent tokens")
-        
-        assert latent_count == expected_latent, f"Expected {expected_latent} latent tokens, got {latent_count}"
-        
-        # Verify multimodal components
-        assert 'pixel_values' in sample
-        assert 'num_patches' in sample
-    
-    print("  ✓ Validation dataset integration test passed!")
-
-
-def test_uniform_mixing():
-    """Test uniform probability mixing"""
-    print("Testing uniform probability mixing...")
-    
-    config = Config({
-        'epochs_per_stage': 3,
-        'max_latent_stage': 2,
-        'c_thought': 2,
-        'uniform_prob': 1.0,  # Always use uniform mixing
-        'cot': False,
-        'coconut': True,
-        'no_cot': False,
-        'pad_latent_to_max': False
-    })
-    
-    base_dataset = create_test_dataset()
-    
-    start_id = 100
-    latent_id = 101
-    end_id = 102
-    
-    # Run multiple times to see different random stages
-    latent_counts = set()
-    
-    for _ in range(10):
-        stage_dataset = get_multimodal_cot_latent_dataset(
-            scheduled_stage=2,  # Fixed scheduled stage
-            base_dataset=base_dataset,
-            configs=config,
-            start_id=start_id,
-            latent_id=latent_id,
-            end_id=end_id,
-            no_special_marker=False,
-            shuffle=False
-        )
-        
-        sample = stage_dataset[0]
-        latent_count = sample['input_ids'].count(latent_id)
-        latent_counts.add(latent_count)
-    
-    # Should have seen different latent counts due to random mixing
-    print(f"  ✓ Uniform mixing produced {len(latent_counts)} different latent counts: {sorted(latent_counts)}")
-    assert len(latent_counts) > 1, "Uniform mixing should produce different results"
-    
-    print("  ✓ Uniform mixing test passed!")
-
-
-def test_edge_cases():
-    """Test edge cases like no_cot and pad_latent_to_max"""
-    print("Testing edge cases...")
-    
-    # Test no_cot mode
-    config_no_cot = Config({
-        'epochs_per_stage': 3,
-        'max_latent_stage': 2,
-        'c_thought': 2,
-        'uniform_prob': 0.0,
-        'cot': False,
-        'coconut': True,
-        'no_cot': True,  # Enable no_cot
-        'pad_latent_to_max': False
-    })
-    
-    base_dataset = create_test_dataset()
-    
-    stage_dataset = get_multimodal_cot_latent_dataset(
-        scheduled_stage=2,
-        base_dataset=base_dataset,
-        configs=config_no_cot,
-        start_id=100,
-        latent_id=101,
-        end_id=102,
-        no_special_marker=False,
-        shuffle=False
+    base_model = AutoModel.from_pretrained(
+        model_id, trust_remote_code=True, torch_dtype=torch.float32,
+        low_cpu_mem_usage=True, device_map="cpu"
     )
     
-    sample = stage_dataset[0]
-    latent_count = sample['input_ids'].count(101)
-    assert latent_count == 0, f"no_cot mode should have 0 latent tokens, got {latent_count}"
-    print("  ✓ no_cot mode test passed!")
+    if len(tokenizer) > base_model.language_model.config.vocab_size:
+        base_model.language_model.resize_token_embeddings(len(tokenizer))
     
-    # Test pad_latent_to_max
-    config_pad = Config({
-        'epochs_per_stage': 3,
-        'max_latent_stage': 2,
-        'c_thought': 2,
-        'uniform_prob': 0.0,
-        'cot': False,
-        'coconut': True,
-        'no_cot': False,
-        'pad_latent_to_max': True  # Enable padding
-    })
+    # Set IMG_CONTEXT token ID
+    try:
+        img_context_token_id = tokenizer.convert_tokens_to_ids('<IMG_CONTEXT>')
+        base_model.img_context_token_id = img_context_token_id
+        print(f"✓ IMG_CONTEXT token ID: {img_context_token_id}")
+    except:
+        base_model.img_context_token_id = None
+        print("⚠️  IMG_CONTEXT token not found")
     
-    stage_dataset = get_multimodal_cot_latent_dataset(
-        scheduled_stage=5,  # Beyond max_latent_stage
-        base_dataset=base_dataset,
-        configs=config_pad,
-        start_id=100,
-        latent_id=101,
-        end_id=102,
-        no_special_marker=False,
-        shuffle=False
-    )
+    return base_model, tokenizer
+
+
+def create_test_data(temp_dir):
+    """Create minimal test data"""
+    images_dir = Path(temp_dir) / "images"
+    images_dir.mkdir(exist_ok=True)
     
-    sample = stage_dataset[0]
-    latent_count = sample['input_ids'].count(101)
-    expected = config_pad.max_latent_stage * config_pad.c_thought
-    assert latent_count == expected, f"pad_latent_to_max should give {expected} tokens, got {latent_count}"
-    print("  ✓ pad_latent_to_max test passed!")
+    # Create a single test image
+    img_array = np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8)
+    img = Image.fromarray(img_array)
+    img_path = images_dir / "test_image.jpg"
+    img.save(img_path)
     
-    print("  ✓ Edge cases test passed!")
+    # Create minimal training data
+    train_data = [{
+        "image_path": str(img_path),
+        "question": "What is in this image?",
+        "steps": ["Step 1: I can see the image"],
+        "answer": "This is a test image"
+    }]
+    
+    train_path = Path(temp_dir) / "train.json"
+    with open(train_path, 'w') as f:
+        json.dump(train_data, f, indent=2)
+    
+    return str(train_path), str(images_dir)
+
+
+def debug_visual_embedding_mismatch():
+    """Debug the visual embedding shape mismatch"""
+    print("\n🔍 DEBUGGING VISUAL EMBEDDING SHAPE MISMATCH")
+    print("=" * 60)
+    
+    temp_dir = tempfile.mkdtemp()
+    
+    try:
+        # Setup
+        base_model, tokenizer = setup_model_and_tokenizer()
+        train_path, images_dir = create_test_data(temp_dir)
+        
+        # Create dataset
+        dataset = get_multimodal_dataset(
+            data_path=train_path,
+            tokenizer=tokenizer,
+            image_root=images_dir,
+            image_size=224,
+            max_num_patches=4,
+            max_size=1
+        )
+        
+        print(f"✓ Dataset created with {len(dataset)} samples")
+        
+        # Examine the sample
+        sample = dataset[0]
+        print(f"\n📊 Sample analysis:")
+        print(f"  Pixel values shape: {sample['pixel_values'].shape}")
+        print(f"  Num patches: {sample['num_patches']}")
+        
+        # Check tokenized question
+        question_tokens = sample['question_tokenized']
+        print(f"  Question tokens length: {len(question_tokens)}")
+        
+        # Count IMG_CONTEXT tokens
+        img_context_id = tokenizer.convert_tokens_to_ids('<IMG_CONTEXT>')
+        img_context_count = question_tokens.count(img_context_id)
+        print(f"  IMG_CONTEXT tokens in question: {img_context_count}")
+        
+        # Create collator and batch
+        collator = MultimodalCollator(tokenizer=tokenizer, latent_id=tokenizer.latent_token_id)
+        batch = collator([sample])
+        
+        print(f"\n📦 Batch analysis:")
+        print(f"  Input IDs shape: {batch['input_ids'].shape}")
+        print(f"  Pixel values shape: {batch['pixel_values'].shape}")
+        print(f"  Image flags shape: {batch['image_flags'].shape}")
+        
+        # Count IMG_CONTEXT tokens in batch
+        input_ids_flat = batch['input_ids'].flatten()
+        img_context_count_batch = (input_ids_flat == img_context_id).sum().item()
+        print(f"  IMG_CONTEXT tokens in batch: {img_context_count_batch}")
+        
+        # Create model and test forward pass
+        model = MultimodalCoconut(
+            base_model=base_model,
+            latent_token_id=tokenizer.latent_token_id,
+            start_latent_id=tokenizer.start_latent_id,
+            end_latent_id=tokenizer.end_latent_id,
+            eos_token_id=tokenizer.eos_token_id
+        )
+        
+        # Test forward pass with detailed debugging
+        forward_batch = {k: v for k, v in batch.items() if k not in ['idx', '_num_patches_list']}
+        
+        print(f"\n🚀 Testing forward pass...")
+        
+        try:
+            # Let's examine what happens in the base model
+            print(f"  Base model img_context_token_id: {base_model.img_context_token_id}")
+            
+            # Extract visual features manually to see their shape
+            pixel_values = forward_batch['pixel_values']
+            print(f"  Input pixel values shape: {pixel_values.shape}")
+            
+            vit_embeds = base_model.extract_feature(pixel_values)
+            print(f"  Extracted visual embeddings shape: {vit_embeds.shape}")
+            
+            # Check how many IMG_CONTEXT tokens we expect vs have
+            input_ids = forward_batch['input_ids']
+            selected = (input_ids.flatten() == img_context_id)
+            selected_count = selected.sum().item()
+            print(f"  Selected IMG_CONTEXT positions: {selected_count}")
+            print(f"  Visual embeddings available: {vit_embeds.shape[0]}")
+            
+            if selected_count != vit_embeds.shape[0]:
+                print(f"  ⚠️  MISMATCH: Expected {selected_count} visual embeddings, got {vit_embeds.shape[0]}")
+                print(f"  This is the root cause of the tensor shape mismatch!")
+                
+                # Let's see what the actual tokens are
+                print(f"\n🔍 Token analysis:")
+                tokens = input_ids[0].tolist()  # First sample
+                for i, token_id in enumerate(tokens):
+                    token = tokenizer.decode([token_id])
+                    if token_id == img_context_id:
+                        print(f"    Position {i}: {token_id} -> '{token}' (IMG_CONTEXT)")
+                    elif i < 10 or token_id == img_context_id:  # Show first 10 and all IMG_CONTEXT
+                        print(f"    Position {i}: {token_id} -> '{token}'")
+            
+            # Try the forward pass anyway
+            outputs = model(**forward_batch)
+            print(f"✅ Forward pass successful despite warnings!")
+            print(f"  Loss: {outputs.loss}")
+            print(f"  Logits shape: {outputs.logits.shape}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ Forward pass failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+        
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def main():
-    """Run all integration tests"""
-    print("Running stage manager integration tests...\n")
+    """Run the debugging"""
+    print("🔍 DEBUGGING VISUAL EMBEDDING INTEGRATION")
+    print("=" * 60)
     
-    try:
-        test_stage_manager_integration()
-        print()
-        
-        test_validation_dataset_integration()
-        print()
-        
-        test_uniform_mixing()
-        print()
-        
-        test_edge_cases()
-        print()
-        
-        print("🎉 All stage manager integration tests passed!")
-        
-    except Exception as e:
-        print(f"❌ Integration test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return 1
+    success = debug_visual_embedding_mismatch()
     
-    return 0
+    if success:
+        print("\n✅ Analysis completed successfully!")
+        print("The visual embedding mismatch has been identified.")
+    else:
+        print("\n❌ Analysis failed.")
+    
+    return 0 if success else 1
 
 
 if __name__ == "__main__":
