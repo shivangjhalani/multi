@@ -691,7 +691,15 @@ class MultimodalCoconut(nn.Module):
         
         # Tokenize the query
         model_inputs = tokenizer(query, return_tensors='pt')
-        device = next(self.parameters()).device
+        
+        # Get device - handle both real models and test mocks
+        try:
+            device = next(self.parameters()).device
+        except StopIteration:
+            # Fallback for test mocks or models without parameters
+            printf("Warning: No parameters found in model, fallback to cpu")
+            device = torch.device('cpu')
+        
         input_ids = model_inputs['input_ids'].to(device)
         attention_mask = model_inputs['attention_mask'].to(device)
         
