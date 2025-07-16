@@ -609,6 +609,7 @@ def test_cot_trainer_integration(results, temp_dir):
         # Create configuration
         config = Config({
             'name': 'test_integration',
+            'model_id': 'OpenGVLab/InternVL3-1B-Pretrained',
             'save_path': temp_dir,
             'batch_size_training': 2,
             'batch_size_eval': 2,
@@ -620,8 +621,12 @@ def test_cot_trainer_integration(results, temp_dir):
             'coconut': False,
             'c_thought': 2,
             'max_latent_stage': 2,
+            'epochs_per_stage': 2,
             'image_size': 224,
             'max_num_patches': 4,
+            'pad_latent_to_max': False,
+            'uniform_prob': 0.0,
+            'no_cot': False,
         })
         
         # Try to use real model and tokenizer
@@ -708,6 +713,7 @@ def test_end_to_end_pipeline(results, temp_dir):
         
         config = Config({
             'name': 'end_to_end_test',
+            'model_id': 'OpenGVLab/InternVL3-1B-Pretrained',
             'save_path': temp_dir,
             'batch_size_training': 2,
             'batch_size_eval': 2,
@@ -722,6 +728,9 @@ def test_end_to_end_pipeline(results, temp_dir):
             'epochs_per_stage': 2,
             'image_size': 224,
             'max_num_patches': 4,
+            'pad_latent_to_max': False,
+            'uniform_prob': 0.0,
+            'no_cot': False,
         })
         
         # Try to use real model and tokenizer
