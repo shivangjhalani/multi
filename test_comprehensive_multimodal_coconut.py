@@ -88,7 +88,7 @@ def setup_real_model_and_tokenizer():
     """Setup real InternVL model and tokenizer for testing"""
     try:
         # Use a lightweight model for testing
-        model_id = "OpenGVLab/InternVL2-1B"
+        model_id = "OpenGVLab/InternVL3-1B-Pretrained"
         
         print(f"Loading real InternVL model: {model_id}")
         
