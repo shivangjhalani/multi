@@ -507,99 +507,233 @@ class MultimodalCoconut(nn.Module):
             **kwargs
         )
     
+    @torch.no_grad()
     def generate(self,
-                 pixel_values: torch.FloatTensor,
-                 input_ids: torch.LongTensor,
+                 pixel_values: Optional[torch.FloatTensor] = None,
+                 input_ids: Optional[torch.LongTensor] = None,
                  attention_mask: Optional[torch.Tensor] = None,
                  image_flags: Optional[torch.LongTensor] = None,
-                 max_new_tokens: int = 100,
-                 do_sample: bool = True,
-                 temperature: float = 0.7,
-                 top_p: float = 0.9,
-                 **generation_kwargs) -> torch.LongTensor:
+                 visual_features: Optional[torch.FloatTensor] = None,
+                 generation_config: Optional[dict] = None,
+                 output_hidden_states: Optional[bool] = None,
+                 **generate_kwargs) -> torch.LongTensor:
         """
         Generate text with multimodal continuous thought reasoning.
         
-        For now, we implement a simple generation approach that works with our CoCoNuT forward pass.
-        This avoids the InternVL3 generation complexity while still testing the core functionality.
+        This method follows InternVL's generate pattern but uses our CoCoNuT forward pass
+        for continuous thought reasoning. It supports both multimodal and text-only generation.
         
         Args:
-            pixel_values: Image pixel values
-            input_ids: Input token IDs
-            attention_mask: Attention mask
-            image_flags: Image flags
-            max_new_tokens: Maximum number of tokens to generate
-            do_sample: Whether to use sampling
-            temperature: Sampling temperature
-            top_p: Top-p sampling parameter
-            **generation_kwargs: Additional generation arguments
+            pixel_values: Image pixel values [total_patches, channels, height, width]
+            input_ids: Input token IDs [batch_size, sequence_length]
+            attention_mask: Attention mask [batch_size, sequence_length]
+            image_flags: Flags indicating which samples have images [batch_size, 1]
+            visual_features: Pre-computed visual features (optional)
+            generation_config: Generation configuration dictionary
+            output_hidden_states: Whether to output hidden states
+            **generate_kwargs: Additional generation arguments
             
         Returns:
-            Generated token IDs
+            Generated token IDs [batch_size, generated_length]
         """
+        # Set default generation config
+        if generation_config is None:
+            generation_config = {}
+        
+        # Extract generation parameters
+        max_new_tokens = generation_config.get('max_new_tokens', generate_kwargs.get('max_new_tokens', 100))
+        do_sample = generation_config.get('do_sample', generate_kwargs.get('do_sample', True))
+        temperature = generation_config.get('temperature', generate_kwargs.get('temperature', 0.7))
+        top_p = generation_config.get('top_p', generate_kwargs.get('top_p', 0.9))
+        top_k = generation_config.get('top_k', generate_kwargs.get('top_k', 50))
+        eos_token_id = generation_config.get('eos_token_id', self.eos_token_id)
+        pad_token_id = generation_config.get('pad_token_id', eos_token_id)
+        
         self.eval()
         
-        with torch.no_grad():
-            # Simple autoregressive generation using our forward method
-            generated_ids = input_ids.clone()
+        # Handle multimodal inputs by preparing embeddings (following InternVL pattern)
+        if pixel_values is not None:
+            # Use visual features if provided, otherwise extract them
+            if visual_features is not None:
+                vit_embeds = visual_features
+            else:
+                vit_embeds = self.base_model.extract_feature(pixel_values)
             
-            for _ in range(max_new_tokens):
-                # Get current attention mask
-                current_attention_mask = torch.ones_like(generated_ids) if attention_mask is None else attention_mask
-                
-                # Extend attention mask if needed
-                if current_attention_mask.size(1) < generated_ids.size(1):
-                    padding = torch.ones(
-                        current_attention_mask.size(0), 
-                        generated_ids.size(1) - current_attention_mask.size(1),
-                        device=current_attention_mask.device,
-                        dtype=current_attention_mask.dtype
-                    )
-                    current_attention_mask = torch.cat([current_attention_mask, padding], dim=1)
-                
-                # Forward pass through our CoCoNuT model
-                outputs = self.forward(
-                    pixel_values=pixel_values,
-                    input_ids=generated_ids,
-                    attention_mask=current_attention_mask,
-                    image_flags=image_flags,
-                    use_cache=False  # Disable cache for simplicity in generation
-                )
-                
-                # Get next token logits
-                next_token_logits = outputs.logits[:, -1, :]
-                
-                # Apply temperature
-                if temperature != 1.0:
-                    next_token_logits = next_token_logits / temperature
-                
-                # Sample or take argmax
-                if do_sample:
-                    # Apply top-p sampling
-                    if top_p < 1.0:
-                        sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
-                        cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
-                        sorted_indices_to_remove = cumulative_probs > top_p
-                        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-                        sorted_indices_to_remove[..., 0] = 0
-                        indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
-                        next_token_logits[indices_to_remove] = float('-inf')
-                    
-                    # Sample from the distribution
-                    probs = torch.softmax(next_token_logits, dim=-1)
-                    next_token = torch.multinomial(probs, num_samples=1)
-                else:
-                    # Greedy decoding
-                    next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
-                
-                # Append the new token
-                generated_ids = torch.cat([generated_ids, next_token], dim=1)
-                
-                # Check for EOS token
-                if next_token.item() == self.eos_token_id:
-                    break
+            # Get text embeddings
+            input_embeds = self.base_model.language_model.get_input_embeddings()(input_ids)
+            B, N, C = input_embeds.shape
+            input_embeds = input_embeds.reshape(B * N, C)
+            
+            # Replace IMG_CONTEXT tokens with visual embeddings
+            input_ids_flat = input_ids.reshape(B * N)
+            img_context_token_id = getattr(self.base_model, 'img_context_token_id', None)
+            
+            if img_context_token_id is not None:
+                selected = (input_ids_flat == img_context_token_id)
+                if selected.sum() > 0:
+                    try:
+                        vit_embeds_flat = vit_embeds.reshape(-1, C)
+                        input_embeds[selected] = vit_embeds_flat.to(input_embeds.device)
+                    except Exception as e:
+                        # Handle shape mismatch gracefully
+                        n_token = selected.sum()
+                        vit_embeds_flat = vit_embeds.reshape(-1, C)
+                        if n_token <= vit_embeds_flat.shape[0]:
+                            input_embeds[selected] = vit_embeds_flat[:n_token].to(input_embeds.device)
+                        else:
+                            # Repeat the last visual embedding if needed
+                            repeated_embeds = vit_embeds_flat[-1:].repeat(n_token, 1)
+                            input_embeds[selected] = repeated_embeds.to(input_embeds.device)
+            
+            input_embeds = input_embeds.reshape(B, N, C)
+        else:
+            # Text-only generation
+            input_embeds = self.base_model.language_model.get_input_embeddings()(input_ids)
         
-        return generated_ids
+        # Use the language model's generate method with our prepared embeddings
+        # This leverages the optimized generation implementation while using our multimodal embeddings
+        outputs = self.base_model.language_model.generate(
+            inputs_embeds=input_embeds,
+            attention_mask=attention_mask,
+            max_new_tokens=max_new_tokens,
+            do_sample=do_sample,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            eos_token_id=eos_token_id,
+            pad_token_id=pad_token_id,
+            output_hidden_states=output_hidden_states,
+            use_cache=True,
+            **generate_kwargs
+        )
+        
+        return outputs
+    
+    def chat(self, 
+             tokenizer,
+             pixel_values: Optional[torch.FloatTensor] = None,
+             question: str = "",
+             generation_config: Optional[dict] = None,
+             history: Optional[List[Tuple[str, str]]] = None,
+             return_history: bool = False,
+             num_patches_list: Optional[List[int]] = None,
+             IMG_START_TOKEN: str = '<img>',
+             IMG_END_TOKEN: str = '</img>',
+             IMG_CONTEXT_TOKEN: str = '<IMG_CONTEXT>',
+             verbose: bool = False) -> Union[str, Tuple[str, List[Tuple[str, str]]]]:
+        """
+        Chat interface for multimodal CoCoNuT model.
+        
+        This method provides a conversational interface similar to InternVL's chat method
+        but uses our CoCoNuT model for continuous thought reasoning.
+        
+        Args:
+            tokenizer: Tokenizer for text processing
+            pixel_values: Image pixel values [total_patches, channels, height, width]
+            question: User question/prompt
+            generation_config: Generation configuration
+            history: Conversation history as list of (question, answer) tuples
+            return_history: Whether to return updated history
+            num_patches_list: Number of patches per image
+            IMG_START_TOKEN: Image start token
+            IMG_END_TOKEN: Image end token
+            IMG_CONTEXT_TOKEN: Image context token
+            verbose: Whether to print verbose output
+            
+        Returns:
+            Generated response, optionally with updated history
+        """
+        # Add image placeholder if not present and we have images
+        if history is None and pixel_values is not None and '<image>' not in question:
+            question = '<image>\n' + question
+        
+        # Set up num_patches_list
+        if num_patches_list is None:
+            num_patches_list = [pixel_values.shape[0]] if pixel_values is not None else []
+        
+        # Validate pixel_values and num_patches_list consistency
+        if pixel_values is not None:
+            assert len(pixel_values) == sum(num_patches_list), \
+                f"Pixel values length ({len(pixel_values)}) != sum of patches ({sum(num_patches_list)})"
+        
+        # Set up image context token ID
+        img_context_token_id = tokenizer.convert_tokens_to_ids(IMG_CONTEXT_TOKEN)
+        self.base_model.img_context_token_id = img_context_token_id
+        
+        # Build conversation prompt
+        # For simplicity, we use a basic template - this can be enhanced with proper conversation templates
+        history = [] if history is None else history
+        
+        # Build the full conversation
+        conversation_parts = []
+        
+        # Add history
+        for old_question, old_answer in history:
+            conversation_parts.append(f"Human: {old_question}")
+            conversation_parts.append(f"Assistant: {old_answer}")
+        
+        # Add current question
+        conversation_parts.append(f"Human: {question}")
+        conversation_parts.append("Assistant:")
+        
+        query = "\n".join(conversation_parts)
+        
+        if verbose and pixel_values is not None:
+            image_bs = pixel_values.shape[0]
+            print(f'Dynamic ViT batch size: {image_bs}')
+        
+        # Replace <image> placeholders with actual image tokens
+        for num_patches in num_patches_list:
+            # Calculate number of image tokens (following InternVL pattern)
+            num_image_token = getattr(self.base_model, 'num_image_token', 256)  # Default for InternVL3-1B
+            image_tokens = IMG_START_TOKEN + IMG_CONTEXT_TOKEN * num_image_token * num_patches + IMG_END_TOKEN
+            query = query.replace('<image>', image_tokens, 1)
+        
+        # Tokenize the query
+        model_inputs = tokenizer(query, return_tensors='pt')
+        device = next(self.parameters()).device
+        input_ids = model_inputs['input_ids'].to(device)
+        attention_mask = model_inputs['attention_mask'].to(device)
+        
+        # Set up generation config
+        if generation_config is None:
+            generation_config = {}
+        
+        # Set EOS token ID (use tokenizer's EOS token)
+        generation_config['eos_token_id'] = tokenizer.eos_token_id
+        
+        # Generate response
+        generation_output = self.generate(
+            pixel_values=pixel_values,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            generation_config=generation_config
+        )
+        
+        # Decode the response
+        response = tokenizer.batch_decode(generation_output, skip_special_tokens=True)[0]
+        
+        # Extract only the new part (after "Assistant:")
+        if "Assistant:" in response:
+            response = response.split("Assistant:")[-1].strip()
+        
+        # Clean up the response
+        response = response.strip()
+        
+        # Update history
+        history.append((question, response))
+        
+        if verbose:
+            # Print clean query for debugging
+            query_to_print = query.replace(IMG_CONTEXT_TOKEN, '')
+            query_to_print = query_to_print.replace(f'{IMG_START_TOKEN}{IMG_END_TOKEN}', '<image>')
+            print(f"Query: {query_to_print}")
+            print(f"Response: {response}")
+        
+        if return_history:
+            return response, history
+        else:
+            return response
 
 
 def create_multimodal_coconut_model(config: Config) -> Tuple[MultimodalCoconut, AutoTokenizer]:
