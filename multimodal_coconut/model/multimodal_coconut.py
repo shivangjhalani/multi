@@ -75,49 +75,23 @@ class MultimodalCoconut(nn.Module):
     
     def _determine_hidden_size(self, base_model: nn.Module) -> int:
         """
-        Robustly determine the hidden size from the base model.
+        Get the language model's hidden size for CoCoNuT continuous thought mechanism.
         
         Args:
-            base_model: The base model to inspect
+            base_model: InternVL3 base model
             
         Returns:
-            Hidden size dimension
+            Language model hidden size dimension
         """
-        # Try different ways to get hidden size
+        # For InternVL3, get language model hidden size (needed for continuous thoughts)
         if hasattr(base_model, 'language_model') and hasattr(base_model.language_model, 'config'):
-            if hasattr(base_model.language_model.config, 'hidden_size'):
-                return base_model.language_model.config.hidden_size
+            return base_model.language_model.config.hidden_size
         
-        if hasattr(base_model, 'config'):
-            # Try direct config access
-            if hasattr(base_model.config, 'hidden_size'):
-                return base_model.config.hidden_size
-            
-            # Try llm_config (InternVL3 pattern)
-            if hasattr(base_model.config, 'llm_config') and hasattr(base_model.config.llm_config, 'hidden_size'):
-                return base_model.config.llm_config.hidden_size
-            
-            # Try text_config (some multimodal models)
-            if hasattr(base_model.config, 'text_config') and hasattr(base_model.config.text_config, 'hidden_size'):
-                return base_model.config.text_config.hidden_size
-        
-        # Try to infer from embeddings
-        if hasattr(base_model, 'language_model'):
-            try:
-                embeddings = base_model.language_model.get_input_embeddings()
-                if hasattr(embeddings, 'embedding_dim'):
-                    return embeddings.embedding_dim
-                elif hasattr(embeddings, 'weight'):
-                    return embeddings.weight.shape[1]
-            except:
-                pass
-        
-        # Try to infer from model structure (for mock models in tests)
+        # Fallback for testing with mock models
         if hasattr(base_model, 'embeddings') and hasattr(base_model.embeddings, 'weight'):
             return base_model.embeddings.weight.shape[1]
         
-        # Default fallback for testing
-        print("Warning: Could not determine hidden size, using default 64")
+        # Default for tests
         return 64
     
     def forward(self,
