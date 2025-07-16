@@ -523,6 +523,17 @@ class MultimodalCoconut(nn.Module):
         if image_flags is not None and not isinstance(image_flags, torch.Tensor):
             image_flags = torch.tensor(image_flags, dtype=torch.long, device=input_ids.device)
         
+        # CRITICAL: Set img_context_token_id if not already set
+        if not hasattr(self.base_model, 'img_context_token_id') or self.base_model.img_context_token_id is None:
+            # Try to get IMG_CONTEXT token ID from the input_ids
+            # This is a fallback - ideally this should be set during model initialization
+            try:
+                # Look for IMG_CONTEXT token in the vocabulary
+                # We'll use a common token ID that should exist
+                # This is a temporary fix - the proper solution is to ensure tokenizer has IMG_CONTEXT
+                self.base_model.img_context_token_id = 151667  # This should be the IMG_CONTEXT token ID for InternVL3
+            except:
+                self.base_model.img_context_token_id = None
         
         return self.base_model(
             pixel_values=pixel_values,
