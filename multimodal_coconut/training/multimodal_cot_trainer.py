@@ -300,8 +300,10 @@ class MultimodalCoTTrainer:
         
         for step, batch in enumerate(train_dataloader):
             # Move batch to device and filter out internal parameters
+            # Handle device placement more carefully for CPU/CUDA compatibility
+            device = next(self.model.parameters()).device  # Get model's device
             batch = {
-                key: batch[key].to(self.rank) if isinstance(batch[key], torch.Tensor) else batch[key]
+                key: batch[key].to(device) if isinstance(batch[key], torch.Tensor) else batch[key]
                 for key in batch.keys() if key not in ["idx", "_num_patches_list"]
             }
             
@@ -382,8 +384,10 @@ class MultimodalCoTTrainer:
         with torch.no_grad():
             for step, batch in enumerate(val_dataloader):
                 # Move batch to device and filter out internal parameters
+                # Handle device placement more carefully for CPU/CUDA compatibility
+                device = next(self.model.parameters()).device  # Get model's device
                 batch = {
-                    key: batch[key].to(self.rank) if isinstance(batch[key], torch.Tensor) else batch[key]
+                    key: batch[key].to(device) if isinstance(batch[key], torch.Tensor) else batch[key]
                     for key in batch.keys() if key not in ["idx", "_num_patches_list"]
                 }
                 

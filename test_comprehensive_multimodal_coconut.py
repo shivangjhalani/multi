@@ -420,7 +420,7 @@ def test_multimodal_collator(results, temp_dir):
         batch = collator(features)
         
         # Verify batch structure
-        required_keys = ['input_ids', 'attention_mask', 'pixel_values', 'image_flags', 'num_patches_list']
+        required_keys = ['input_ids', 'attention_mask', 'pixel_values', 'image_flags', '_num_patches_list']
         for key in required_keys:
             assert key in batch, f"Missing batch key: {key}"
         
