@@ -371,8 +371,9 @@ class MultimodalCoconut(nn.Module):
         """
         Prepare multimodal embeddings by integrating visual features into text embeddings.
         
-        This follows InternVL3's pattern exactly - visual features replace IMG_CONTEXT tokens.
-        This is critical for multimodal CoCoNuT to work correctly.
+        This follows InternVL3's pattern but handles the shape mismatch correctly.
+        The key insight: InternVL3 produces multiple visual tokens (e.g., 64) but we may only
+        have a few IMG_CONTEXT tokens to replace. We need to pool or select appropriately.
         
         Args:
             pixel_values: Image pixel values [total_patches, channels, height, width]
@@ -390,14 +391,14 @@ class MultimodalCoconut(nn.Module):
         input_embeds = self.base_model.language_model.get_input_embeddings()(input_ids).clone()
         
         # Extract visual features using InternVL3's vision encoder
-        vit_embeds = self.base_model.extract_feature(pixel_values)
+        vit_embeds = self.base_model.extract_feature(pixel_values)  # Shape: [num_visual_tokens, hidden_size]
         
         # Filter visual embeddings based on image flags
         if image_flags is not None:
             image_flags = image_flags.squeeze(-1)
             vit_embeds = vit_embeds[image_flags == 1]
         
-        # Replace IMG_CONTEXT tokens with visual embeddings (following InternVL3 pattern)
+        # Replace IMG_CONTEXT tokens with visual embeddings
         B, N, C = input_embeds.shape
         input_embeds = input_embeds.reshape(B * N, C)
         input_ids_flat = input_ids.reshape(B * N)
@@ -406,20 +407,28 @@ class MultimodalCoconut(nn.Module):
         img_context_token_id = getattr(self.base_model, 'img_context_token_id', None)
         if img_context_token_id is not None:
             selected = (input_ids_flat == img_context_token_id)
-            if selected.sum() > 0:
-                try:
-                    vit_embeds_flat = vit_embeds.reshape(-1, C)
-                    input_embeds[selected] = input_embeds[selected] * 0.0 + vit_embeds_flat
-                except Exception as e:
-                    # Handle shape mismatch gracefully
-                    n_token = selected.sum()
-                    vit_embeds_flat = vit_embeds.reshape(-1, C)
-                    if n_token <= vit_embeds_flat.shape[0]:
-                        input_embeds[selected] = input_embeds[selected] * 0.0 + vit_embeds_flat[:n_token]
-                    else:
-                        # If we don't have enough visual tokens, repeat the last one
-                        repeated_embeds = vit_embeds_flat[-1:].repeat(n_token, 1)
-                        input_embeds[selected] = input_embeds[selected] * 0.0 + repeated_embeds
+            n_img_tokens = selected.sum().item()
+            
+            if n_img_tokens > 0:
+                # Handle the shape mismatch properly
+                vit_embeds_flat = vit_embeds.reshape(-1, C)  # [num_visual_tokens, hidden_size]
+                n_visual_tokens = vit_embeds_flat.shape[0]
+                
+                if n_img_tokens == n_visual_tokens:
+                    # Perfect match - use all visual tokens
+                    input_embeds[selected] = vit_embeds_flat
+                elif n_img_tokens < n_visual_tokens:
+                    # More visual tokens than IMG_CONTEXT tokens - pool or select
+                    # Strategy: Use mean pooling to compress visual information
+                    pooled_visual = vit_embeds_flat.mean(dim=0, keepdim=True).repeat(n_img_tokens, 1)
+                    input_embeds[selected] = pooled_visual
+                else:
+                    # More IMG_CONTEXT tokens than visual tokens - repeat
+                    # This case is less common but we handle it gracefully
+                    repeated_visual = vit_embeds_flat.repeat(
+                        (n_img_tokens + n_visual_tokens - 1) // n_visual_tokens, 1
+                    )[:n_img_tokens]
+                    input_embeds[selected] = repeated_visual
         
         # Reshape back to original dimensions
         input_embeds = input_embeds.reshape(B, N, C)

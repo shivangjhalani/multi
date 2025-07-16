@@ -106,7 +106,15 @@ def debug_visual_embedding_mismatch():
         # Examine the sample
         sample = dataset[0]
         print(f"\n📊 Sample analysis:")
-        print(f"  Pixel values shape: {sample['pixel_values'].shape}")
+        
+        # Handle pixel_values which might be a list due to HF datasets serialization
+        pixel_values = sample['pixel_values']
+        if isinstance(pixel_values, list):
+            pixel_values = torch.tensor(pixel_values, dtype=torch.float32)
+            print(f"  Pixel values shape: {pixel_values.shape} (converted from list)")
+        else:
+            print(f"  Pixel values shape: {pixel_values.shape}")
+        
         print(f"  Num patches: {sample['num_patches']}")
         
         # Check tokenized question
@@ -117,6 +125,10 @@ def debug_visual_embedding_mismatch():
         img_context_id = tokenizer.convert_tokens_to_ids('<IMG_CONTEXT>')
         img_context_count = question_tokens.count(img_context_id)
         print(f"  IMG_CONTEXT tokens in question: {img_context_count}")
+        
+        # Show the actual question text to understand the structure
+        question_text = tokenizer.decode(question_tokens)
+        print(f"  Question text: {repr(question_text[:200])}...")  # First 200 chars
         
         # Create collator and batch
         collator = MultimodalCollator(tokenizer=tokenizer, latent_id=tokenizer.latent_token_id)
