@@ -502,40 +502,19 @@ def get_multimodal_cot_latent_dataset(
     Returns:
         Dataset prepared for the current training stage
     """
+    # Import here to avoid circular imports
+    from ..training.stage_manager import StageManager
+    
     n_additional_tokens = 0 if no_special_marker else 2
+    stage_manager = StageManager(configs)
 
     def process_multimodal_dataset(sample):
         """Process a single multimodal sample for the current stage"""
         
-        # Handle stage scheduling with uniform probability mixing
-        if (
-            random.random() < configs.uniform_prob
-        ):  # with some prob, randomly sample stage
-            scheduled_stage_to_train = random.choice(
-                list(range(len(sample["steps_tokenized"]) + 1))
-            )
-        else:
-            scheduled_stage_to_train = scheduled_stage
-
-        if scheduled_stage_to_train > configs.max_latent_stage:
-            n_skip_steps = 10000  # skip all
-            if configs.pad_latent_to_max:
-                n_latent_tokens = configs.max_latent_stage
-            else:
-                n_latent_tokens = min(
-                    len(sample["steps_tokenized"]), configs.max_latent_stage
-                )
-        else:
-            n_skip_steps, n_latent_tokens = (
-                scheduled_stage_to_train,
-                scheduled_stage_to_train,
-            )
-
-        if configs.no_cot:
-            n_skip_steps = 100  # skip all step
-            n_latent_tokens = 0
-
-        n_latent_tokens *= configs.c_thought
+        # Use stage manager for consistent stage calculation
+        effective_stage, n_skip_steps, n_latent_tokens = stage_manager.get_effective_stage_for_sample(
+            scheduled_stage, sample["steps_tokenized"]
+        )
 
         # Build token sequence: question + latent tokens + remaining steps + answer
         tokens = (
@@ -675,8 +654,16 @@ def get_multimodal_question_latent_dataset(
     Returns:
         Dataset prepared for validation/testing
     """
+    # Import here to avoid circular imports
+    from ..training.stage_manager import StageManager
+    
+    stage_manager = StageManager(configs)
+
     def process_multimodal_validation_dataset(sample):
         """Process a single multimodal validation sample"""
+        
+        # Use stage manager for consistent validation data preparation
+        stage_info = stage_manager.get_stage_info(scheduled_stage)
         
         if configs.pad_latent_to_max:
             max_latent_stage = configs.max_latent_stage
