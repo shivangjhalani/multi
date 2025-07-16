@@ -360,7 +360,7 @@ class MultimodalCoconut(nn.Module):
         )
     
     def _prepare_multimodal_embeddings(self,
-                                     pixel_values: Optional[torch.FloatTensor],
+                                     pixel_values: torch.FloatTensor,
                                      input_ids: torch.LongTensor,
                                      image_flags: Optional[torch.LongTensor] = None) -> torch.Tensor:
         """
@@ -370,7 +370,7 @@ class MultimodalCoconut(nn.Module):
         This is critical for multimodal CoCoNuT to work correctly.
         
         Args:
-            pixel_values: Image pixel values [total_patches, channels, height, width] (can be None)
+            pixel_values: Image pixel values [total_patches, channels, height, width]
             input_ids: Text token IDs [batch_size, sequence_length]
             image_flags: Flags indicating which samples have images [batch_size, 1]
             
@@ -389,16 +389,8 @@ class MultimodalCoconut(nn.Module):
         
         # Filter visual embeddings based on image flags
         if image_flags is not None:
-            image_flags_squeezed = image_flags.squeeze(-1)
-            # Create a boolean mask for filtering
-            valid_samples = image_flags_squeezed == 1
-            if torch.is_tensor(valid_samples):
-                if valid_samples.any():
-                    # Only filter if we have valid samples
-                    vit_embeds = vit_embeds[valid_samples]
-            elif valid_samples:  # Handle case where valid_samples is a single boolean
-                # All samples are valid, no filtering needed
-                pass
+            image_flags = image_flags.squeeze(-1)
+            vit_embeds = vit_embeds[image_flags == 1]
         
         # Replace IMG_CONTEXT tokens with visual embeddings (following InternVL3 pattern)
         B, N, C = input_embeds.shape
@@ -412,17 +404,17 @@ class MultimodalCoconut(nn.Module):
             if selected.sum() > 0:
                 try:
                     vit_embeds_flat = vit_embeds.reshape(-1, C)
-                    input_embeds[selected] = input_embeds[selected] * 0.0 + vit_embeds_flat.to(input_embeds.device)
+                    input_embeds[selected] = input_embeds[selected] * 0.0 + vit_embeds_flat
                 except Exception as e:
                     # Handle shape mismatch gracefully
                     n_token = selected.sum()
                     vit_embeds_flat = vit_embeds.reshape(-1, C)
                     if n_token <= vit_embeds_flat.shape[0]:
-                        input_embeds[selected] = input_embeds[selected] * 0.0 + vit_embeds_flat[:n_token].to(input_embeds.device)
+                        input_embeds[selected] = input_embeds[selected] * 0.0 + vit_embeds_flat[:n_token]
                     else:
                         # If we don't have enough visual tokens, repeat the last one
                         repeated_embeds = vit_embeds_flat[-1:].repeat(n_token, 1)
-                        input_embeds[selected] = input_embeds[selected] * 0.0 + repeated_embeds.to(input_embeds.device)
+                        input_embeds[selected] = input_embeds[selected] * 0.0 + repeated_embeds
         
         # Reshape back to original dimensions
         input_embeds = input_embeds.reshape(B, N, C)
@@ -430,7 +422,7 @@ class MultimodalCoconut(nn.Module):
         return input_embeds
     
     def _standard_multimodal_forward(self,
-                                   pixel_values: Optional[torch.FloatTensor],
+                                   pixel_values: torch.FloatTensor,
                                    input_ids: torch.LongTensor,
                                    attention_mask: Optional[torch.Tensor] = None,
                                    position_ids: Optional[torch.LongTensor] = None,
@@ -503,17 +495,11 @@ class MultimodalCoconut(nn.Module):
         # Filter out parameters that InternVL3 doesn't expect
         filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ['num_patches_list']}
         
-        # Ensure image_flags is provided for multimodal inputs (InternVL3 expects it)
-        if image_flags is None and pixel_values is not None:
-            batch_size = input_ids.shape[0]
-            image_flags = torch.ones(batch_size, 1, dtype=torch.long, device=input_ids.device)
-        
         return self.base_model(
             pixel_values=pixel_values,
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            image_flags=image_flags,
             past_key_values=past_key_values,
             labels=labels,
             use_cache=use_cache,
