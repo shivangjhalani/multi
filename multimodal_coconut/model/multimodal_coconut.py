@@ -73,10 +73,10 @@ class MultimodalCoconut(nn.Module):
         # Determine hidden size from the language model component
         self.hidden_size = self._determine_hidden_size(base_model)
         
-        # Initialize img_context_token_id to None - will be set during forward pass
-        # This is required for InternVL3 compatibility
-        if not hasattr(base_model, 'img_context_token_id'):
-            base_model.img_context_token_id = None
+        # # Initialize img_context_token_id to None - will be set during forward pass
+        # # This is required for InternVL3 compatibility
+        # if not hasattr(base_model, 'img_context_token_id'):
+        #     base_model.img_context_token_id = None
     
     def _determine_hidden_size(self, base_model: nn.Module) -> int:
         """
@@ -426,18 +426,18 @@ class MultimodalCoconut(nn.Module):
         
         return input_embeds
     
-    def _ensure_img_context_token_id(self, tokenizer):
-        """
-        Ensure img_context_token_id is set on the base model.
-        This is required for InternVL3 compatibility.
-        """
-        if not hasattr(self.base_model, 'img_context_token_id') or self.base_model.img_context_token_id is None:
-            try:
-                img_context_token_id = tokenizer.convert_tokens_to_ids('<IMG_CONTEXT>')
-                self.base_model.img_context_token_id = img_context_token_id
-            except:
-                # If tokenizer doesn't have IMG_CONTEXT token, set to None
-                self.base_model.img_context_token_id = None
+    # def _ensure_img_context_token_id(self, tokenizer):
+    #     """
+    #     Ensure img_context_token_id is set on the base model.
+    #     This is required for InternVL3 compatibility.
+    #     """
+    #     if not hasattr(self.base_model, 'img_context_token_id') or self.base_model.img_context_token_id is None:
+    #         try:
+    #             img_context_token_id = tokenizer.convert_tokens_to_ids('<IMG_CONTEXT>')
+    #             self.base_model.img_context_token_id = img_context_token_id
+    #         except:
+    #             # If tokenizer doesn't have IMG_CONTEXT token, set to None
+    #             self.base_model.img_context_token_id = None
     
     def _standard_multimodal_forward(self,
                                    input_ids: torch.LongTensor,
@@ -519,9 +519,9 @@ class MultimodalCoconut(nn.Module):
             batch_size = input_ids.shape[0]
             image_flags = torch.ones(batch_size, 1, dtype=torch.long, device=input_ids.device)
         
-        # Ensure image_flags is a tensor if it's not None
-        if image_flags is not None and not isinstance(image_flags, torch.Tensor):
-            image_flags = torch.tensor(image_flags, dtype=torch.long, device=input_ids.device)
+        # # Ensure image_flags is a tensor if it's not None
+        # if image_flags is not None and not isinstance(image_flags, torch.Tensor):
+        #     image_flags = torch.tensor(image_flags, dtype=torch.long, device=input_ids.device)
         
         # CRITICAL: Set img_context_token_id if not already set
         if not hasattr(self.base_model, 'img_context_token_id') or self.base_model.img_context_token_id is None:

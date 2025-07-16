@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+ #!/usr/bin/env python3
 """
 Test the critical fixes for multimodal CoCoNuT
 """
