@@ -392,9 +392,15 @@ class MultimodalCoconut(nn.Module):
         # Extract visual features using InternVL3's vision encoder
         vit_embeds = self.base_model.extract_feature(pixel_values)
         
+        # Debug logging
+        print(f"DEBUG: pixel_values shape: {pixel_values.shape}")
+        print(f"DEBUG: vit_embeds shape: {vit_embeds.shape}")
+        print(f"DEBUG: input_ids shape: {input_ids.shape}")
+        print(f"DEBUG: input_embeds shape: {input_embeds.shape}")
+        
         # Note: image_flags filtering is not needed here because the data collator
         # already ensures that pixel_values are correctly batched and all samples have images.
-        # The shape mismatch occurs because image_flags has shape [batch_size] but 
+        # The shape mismatch occurs because image_flags has shape [batch_size] but
         # vit_embeds has shape [total_patches, hidden_size] where total_patches != batch_size
         
         # Replace IMG_CONTEXT tokens with visual embeddings (following InternVL3 pattern)
@@ -404,13 +410,22 @@ class MultimodalCoconut(nn.Module):
         
         # Find IMG_CONTEXT token positions
         img_context_token_id = getattr(self.base_model, 'img_context_token_id', None)
+        print(f"DEBUG: img_context_token_id: {img_context_token_id}")
+        
         if img_context_token_id is not None:
             selected = (input_ids_flat == img_context_token_id)
+            print(f"DEBUG: selected positions: {selected.sum()}")
+            print(f"DEBUG: selected shape: {selected.shape}")
+            
             if selected.sum() > 0:
                 try:
                     vit_embeds_flat = vit_embeds.reshape(-1, C)
+                    print(f"DEBUG: vit_embeds_flat shape: {vit_embeds_flat.shape}")
+                    print(f"DEBUG: Trying to assign {vit_embeds_flat.shape[0]} visual tokens to {selected.sum()} positions")
+                    
                     input_embeds[selected] = input_embeds[selected] * 0.0 + vit_embeds_flat
                 except Exception as e:
+                    print(f"DEBUG: Shape mismatch error: {e}")
                     # Handle shape mismatch gracefully
                     n_token = selected.sum()
                     vit_embeds_flat = vit_embeds.reshape(-1, C)
