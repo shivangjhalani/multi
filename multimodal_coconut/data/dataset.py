@@ -431,7 +431,13 @@ class MultimodalCollator:
             )
         
         # Handle multimodal components
-        batch.update(self._collate_multimodal_features(pixel_values_list, num_patches_list))
+        multimodal_batch = self._collate_multimodal_features(pixel_values_list, num_patches_list)
+        
+        # Store num_patches_list separately - don't pass to model forward
+        batch['pixel_values'] = multimodal_batch['pixel_values']
+        batch['image_flags'] = multimodal_batch['image_flags']
+        # Store num_patches_list for internal use but don't pass to model
+        batch['_num_patches_list'] = multimodal_batch['num_patches_list']
         
         return batch
     

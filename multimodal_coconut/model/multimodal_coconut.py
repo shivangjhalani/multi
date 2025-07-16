@@ -501,6 +501,10 @@ class MultimodalCoconut(nn.Module):
             batch_size = input_ids.shape[0]
             image_flags = torch.ones(batch_size, 1, dtype=torch.long, device=input_ids.device)
         
+        # Ensure image_flags is a tensor if it's not None
+        if image_flags is not None and not isinstance(image_flags, torch.Tensor):
+            image_flags = torch.tensor(image_flags, dtype=torch.long, device=input_ids.device)
+        
         return self.base_model(
             pixel_values=pixel_values,
             input_ids=input_ids,
