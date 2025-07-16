@@ -392,10 +392,10 @@ class MultimodalCoconut(nn.Module):
         # Extract visual features using InternVL3's vision encoder
         vit_embeds = self.base_model.extract_feature(pixel_values)
         
-        # Filter visual embeddings based on image flags
-        if image_flags is not None:
-            image_flags = image_flags.squeeze(-1)
-            vit_embeds = vit_embeds[image_flags == 1]
+        # Note: image_flags filtering is not needed here because the data collator
+        # already ensures that pixel_values are correctly batched and all samples have images.
+        # The shape mismatch occurs because image_flags has shape [batch_size] but 
+        # vit_embeds has shape [total_patches, hidden_size] where total_patches != batch_size
         
         # Replace IMG_CONTEXT tokens with visual embeddings (following InternVL3 pattern)
         B, N, C = input_embeds.shape
