@@ -392,9 +392,13 @@ class MultimodalCoconut(nn.Module):
             image_flags_squeezed = image_flags.squeeze(-1)
             # Create a boolean mask for filtering
             valid_samples = image_flags_squeezed == 1
-            if torch.is_tensor(valid_samples) and valid_samples.any():
-                # Only filter if we have valid samples
-                vit_embeds = vit_embeds[valid_samples]
+            if torch.is_tensor(valid_samples):
+                if valid_samples.any():
+                    # Only filter if we have valid samples
+                    vit_embeds = vit_embeds[valid_samples]
+            elif valid_samples:  # Handle case where valid_samples is a single boolean
+                # All samples are valid, no filtering needed
+                pass
         
         # Replace IMG_CONTEXT tokens with visual embeddings (following InternVL3 pattern)
         B, N, C = input_embeds.shape
