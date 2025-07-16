@@ -390,7 +390,11 @@ class MultimodalCoconut(nn.Module):
         # Filter visual embeddings based on image flags
         if image_flags is not None:
             image_flags = image_flags.squeeze(-1)
-            vit_embeds = vit_embeds[image_flags == 1]
+            # Create a boolean mask for filtering
+            valid_samples = image_flags == 1
+            if valid_samples.any():
+                # Only filter if we have valid samples
+                vit_embeds = vit_embeds[valid_samples]
         
         # Replace IMG_CONTEXT tokens with visual embeddings (following InternVL3 pattern)
         B, N, C = input_embeds.shape
@@ -492,19 +496,21 @@ class MultimodalCoconut(nn.Module):
             )
         
         # For multimodal inputs, use the full InternVL3 model
+        # Filter out parameters that InternVL3 doesn't expect
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ['num_patches_list']}
+        
         return self.base_model(
             pixel_values=pixel_values,
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            image_flags=image_flags,
             past_key_values=past_key_values,
             labels=labels,
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
-            **kwargs
+            **filtered_kwargs
         )
     
     @torch.no_grad()
