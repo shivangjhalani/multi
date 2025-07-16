@@ -345,7 +345,11 @@ def test_multimodal_dataset_pipeline(results, temp_dir):
     
     try:
         train_path, val_path, images_dir = create_comprehensive_test_data(temp_dir)
-        tokenizer = MockTokenizer()
+        
+        # Try to use real tokenizer, fallback to mock
+        _, tokenizer = setup_real_model_and_tokenizer()
+        if tokenizer is None:
+            tokenizer = MockTokenizer()
         
         # Test MultimodalDataset
         dataset = MultimodalDataset(
