@@ -126,7 +126,7 @@ for pass_idx in range(max_n_latents):
     - Implement model weight loading and checkpoint management
     - _Requirements: 2.1, 2.2, 6.2_
 
-  - [ ] 3.2 Implement multimodal forward pass logic
+  - [x] 3.2 Implement multimodal forward pass logic
     - Extend original CoCoNuT forward method to handle pixel_values input
     - Implement iterative forward passes with multimodal KV cache
     - Add latent token detection and continuous thought feedback for multimodal inputs
@@ -152,7 +152,7 @@ for pass_idx in range(max_n_latents):
     - Add validation logic for CoT pre-training stage
     - _Requirements: 3.1, 3.7_
 
-  - [ ] 4.3 Implement progressive latent stage training
+  - [x] 4.3 Implement progressive latent stage training
     - Create data preparation for replacing reasoning steps with latent tokens
     - Implement training logic for stages 1 through max_latent_stage
     - Add uniform probability mixing for multi-stage data
