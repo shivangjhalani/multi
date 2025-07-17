@@ -85,12 +85,10 @@ def validate_config(config: Config) -> None:
     # Validate CoCoNuT parameters with type checking
     c_thought = getattr(config, 'c_thought', None)
     if c_thought is not None:
-        try:
-            c_thought_int = int(c_thought)
-            if c_thought_int < 1:
-                raise ValueError("c_thought must be >= 1")
-        except (ValueError, TypeError):
+        if not isinstance(c_thought, int):
             raise ValueError(f"c_thought must be an integer, got {type(c_thought)}")
+        if c_thought < 1:
+            raise ValueError("c_thought must be >= 1")
     
     # Validate max_latent_stage
     if hasattr(config, 'max_latent_stage'):

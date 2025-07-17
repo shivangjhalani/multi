@@ -134,9 +134,10 @@ class MultimodalDataset:
         ]
         
         # Tokenize answer
+        eos_token_id = self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None else self.tokenizer.sep_token_id
         answer_tokenized = self.tokenizer.encode(
             "### " + sample["answer"], add_special_tokens=False
-        ) + [self.tokenizer.eos_token_id]
+        ) + [eos_token_id]
         
         return {
             "pixel_values": pixel_values,  # Keep as tensor
@@ -374,7 +375,8 @@ class MultimodalCollator:
                     feature["labels"] = [self.label_pad_token_id] * n_tok_pad + feature[
                         "labels"
                     ]
-                feature["attention_mask"] = [0] * n_tok_pad + feature["attention_mask"]
+                if "attention_mask" in feature:
+                    feature["attention_mask"] = [0] * n_tok_pad + feature["attention_mask"]
 
         return_tensors = "pt"
 
@@ -384,7 +386,7 @@ class MultimodalCollator:
             {
                 k: v
                 for k, v in feature.items()
-                if k != label_name and k != "position_ids"
+                if k != label_name and k != "position_ids" and k != "idx"
             }
             for feature in text_features
         ]

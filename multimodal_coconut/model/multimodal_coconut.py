@@ -214,7 +214,7 @@ class MultimodalCoconut(nn.Module):
         # Prepare multimodal embeddings (replaces self.embedding(input_ids) from original)
         inputs_embeds = self._prepare_multimodal_embeddings(pixel_values, input_ids, image_flags)
         
-        # Group latent tokens by batch 
+        # Group latent tokens by batch
         latent_lists = [
             [idx[1].item() for idx in latent_indices if idx[0] == i]
             for i in range(batch_size)
@@ -277,7 +277,7 @@ class MultimodalCoconut(nn.Module):
             hidden_states = outputs.hidden_states[-1]  # Get the last layer hidden states
             kv_cache = outputs.past_key_values
             
-            # Continuous thought feedback 
+            # Continuous thought feedback
             filling_indices = [
                 (instance_idx, mask_list[pass_idx])
                 for instance_idx, mask_list in enumerate(latent_lists)

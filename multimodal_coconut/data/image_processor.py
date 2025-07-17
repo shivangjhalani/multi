@@ -11,8 +11,7 @@ from pathlib import Path
 
 import torch
 import torchvision.transforms as T
-from torchvision.transforms.functional import InterpolationMode
-from PIL import Image, ImageFile
+from PIL import Image, ImageFile, Image as PILImage
 import numpy as np
 
 # Enable loading of truncated images
@@ -37,7 +36,7 @@ class ImageProcessor:
                  max_num_patches: int = 12,
                  min_num_patches: int = 1,
                  use_thumbnail: bool = True,
-                 interpolation: InterpolationMode = InterpolationMode.BICUBIC):
+                 interpolation: PILImage.Resampling = PILImage.Resampling.BICUBIC):
         """
         Initialize image processor
         
@@ -119,9 +118,12 @@ class ImageProcessor:
         target_ratios = sorted(target_ratios, key=lambda x: x[0] * x[1])
 
         # Find the closest aspect ratio
-        target_aspect_ratio = self._find_closest_aspect_ratio(
-            aspect_ratio, target_ratios, orig_width, orig_height
-        )
+        if aspect_ratio == 1.0:
+            target_aspect_ratio = (1, 1)
+        else:
+            target_aspect_ratio = self._find_closest_aspect_ratio(
+                aspect_ratio, target_ratios, orig_width, orig_height
+            )
 
         # Calculate target dimensions
         target_width = self.image_size * target_aspect_ratio[0]

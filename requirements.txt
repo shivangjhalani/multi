@@ -1,3 +1,9 @@
+pytest
+
+pyyaml
+
+accelerate
+
 # Core ML frameworks
 torch
 # torchvision>=0.19.0
@@ -29,3 +35,5 @@ wandb
 # PyYAML>=6.0
 
 huggingface_hub
+
+decord
