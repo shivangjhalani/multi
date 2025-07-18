@@ -454,7 +454,7 @@ def test_integration():
          patch('multimodal_coconut.validate_config') as mock_validate_config, \
          patch('multimodal_coconut.setup_logging') as mock_setup_logging, \
          patch('transformers.AutoTokenizer.from_pretrained') as mock_tokenizer, \
-         patch('multimodal_coconut.model.MultimodalCoconut.from_pretrained') as mock_model, \
+         patch('multimodal_coconut.model.multimodal_coconut.MultimodalCoconut') as mock_model_class, \
          patch('multimodal_coconut.training.create_progressive_trainer') as mock_trainer:
         
         # Setup mocks
@@ -494,7 +494,7 @@ def test_integration():
         
         mock_model_instance = Mock()
         mock_model_instance.to.return_value = mock_model_instance
-        mock_model.return_value = mock_model_instance
+        mock_model_class.from_pretrained = Mock(return_value=mock_model_instance)
         
         mock_trainer_instance = Mock()
         mock_trainer_instance.train_progressive.return_value = {"status": "completed"}
