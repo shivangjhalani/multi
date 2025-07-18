@@ -216,13 +216,13 @@ for pass_idx in range(max_n_latents):
     - _Requirements: 5.4, 5.5_
 
 - [-] 8. Implement comprehensive testing framework
-  - [ ] 8.1 Create unit tests for core components
+  - [x] 8.1 Create unit tests for core components
     - Write tests for multimodal data pipeline components
     - Add tests for model forward pass and generation logic
     - Create tests for configuration system and utilities
     - _Requirements: 6.1, 6.2, 6.3_
 
-  - [ ] 8.2 Implement integration tests
+  - [-] 8.2 Implement integration tests
     - Create end-to-end training tests on small datasets
     - Add model compatibility tests with different InternVL3 variants
     - Implement distributed training integration tests
