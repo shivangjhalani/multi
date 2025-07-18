@@ -4,6 +4,12 @@ Utility functions for Multimodal CoCoNuT
 
 from .distributed import (
     init_distributed_training,
+    setup_distributed_environment,
+    setup_multimodal_distributed_model,
+    synchronize_multimodal_batch,
+    get_distributed_sampler,
+    all_gather_object,
+    broadcast_object,
     cleanup_distributed,
     is_main_process,
     get_rank,
@@ -46,6 +52,12 @@ from .memory import (
 __all__ = [
     # Distributed training
     'init_distributed_training',
+    'setup_distributed_environment',
+    'setup_multimodal_distributed_model',
+    'synchronize_multimodal_batch',
+    'get_distributed_sampler',
+    'all_gather_object',
+    'broadcast_object',
     'cleanup_distributed', 
     'is_main_process',
     'get_rank',
