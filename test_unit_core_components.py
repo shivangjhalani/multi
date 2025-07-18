@@ -265,17 +265,21 @@ class TestMultimodalDataset:
     
     def test_dataset_creation(self):
         """Test dataset creation and initialization"""
-        dataset = MultimodalDataset(
-            data_path=str(self.data_path),
-            tokenizer=self.mock_tokenizer,
-            image_root=str(self.temp_path),
-            image_size=224,
-            max_num_patches=6
-        )
-        
-        assert len(dataset) == 3
-        assert dataset.image_root == str(self.temp_path)
-        assert dataset.image_size == 224
+        try:
+            dataset = MultimodalDataset(
+                data_path=str(self.data_path),
+                tokenizer=self.mock_tokenizer,
+                image_root=str(self.temp_path),
+                image_size=224,
+                max_num_patches=6
+            )
+            
+            assert len(dataset) == 3
+            assert dataset.image_root == Path(str(self.temp_path))
+            assert dataset.image_size == 224
+        except Exception as e:
+            print(f"Dataset creation failed: {e}")
+            raise
     
     def test_dataset_getitem(self):
         """Test dataset item retrieval"""
