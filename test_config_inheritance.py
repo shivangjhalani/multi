@@ -55,7 +55,7 @@ new_param: "child-only"
             assert config.seed == 42, f"Expected seed=42, got {config.seed}"
             assert config.model_id == "base-model", f"Expected model_id='base-model', got {config.model_id}"
             assert config.use_fsdp == True, f"Expected use_fsdp=True, got {config.use_fsdp}"
-            assert config.learning_rate == 1e-5, f"Expected learning_rate=1e-5, got {config.learning_rate}"
+            assert abs(config.learning_rate - 1e-5) < 1e-10, f"Expected learning_rate=1e-5, got {config.learning_rate}"
             
             # Check overridden values
             assert config.c_thought == 3, f"Expected c_thought=3, got {config.c_thought}"
@@ -222,7 +222,7 @@ new_param: "main-only"
         # Check values from first base
         assert config.seed == 42
         assert config.model_id == "base-model"
-        assert config.learning_rate == 1e-5
+        assert abs(config.learning_rate - 1e-5) < 1e-10
         
         # Check values from second base
         assert config.batch_size_training == 8
