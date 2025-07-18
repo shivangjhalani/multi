@@ -389,18 +389,37 @@ def test_integration():
     mock_tokenizer.start_latent_id = 1001
     mock_tokenizer.end_latent_id = 1002
     
-    mock_config = Mock()
-    mock_config.save_path = "test_checkpoints"
-    mock_config.name = "test_model"
-    mock_config.cot = True
-    mock_config.batch_size_training = 4
-    mock_config.learning_rate = 1e-5
-    mock_config.num_epochs = 2
-    mock_config.max_checkpoints = 3
-    mock_config.enable_gradient_checkpointing = True
-    mock_config.enable_auto_batch_reduction = True
-    mock_config.min_batch_size = 1
-    mock_config.memory_cleanup_frequency = 10
+    # Create a proper config object instead of Mock to avoid comparison issues
+    class MockConfig:
+        def __init__(self):
+            # Basic training config
+            self.save_path = "test_checkpoints"
+            self.name = "test_model"
+            self.cot = True
+            self.coconut = False
+            self.batch_size_training = 4
+            self.learning_rate = 1e-5
+            self.num_epochs = 2
+            
+            # Task 6 features config
+            self.max_checkpoints = 3
+            self.enable_gradient_checkpointing = True
+            self.enable_auto_batch_reduction = True
+            self.min_batch_size = 1
+            self.memory_cleanup_frequency = 10
+            
+            # StageManager required config parameters
+            self.max_latent_stage = 3
+            self.c_thought = 8
+            self.uniform_prob = 0.5
+            self.epochs_per_stage = 5
+            self.no_cot = False
+            self.pad_latent_to_max = False
+        
+        def to_dict(self):
+            return self.__dict__
+    
+    mock_config = MockConfig()
     
     # Add StageManager required attributes
     mock_config.epochs_per_stage = 5
