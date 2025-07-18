@@ -37,3 +37,7 @@ wandb
 huggingface_hub
 
 decord
+
+matplotlib
+seaborn
+scikit-learn
