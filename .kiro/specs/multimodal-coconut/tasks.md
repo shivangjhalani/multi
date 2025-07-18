@@ -209,7 +209,7 @@ for pass_idx in range(max_n_latents):
     - Implement runtime configuration updates for stage transitions
     - _Requirements: 5.3, 5.4_
 
-  - [-] 7.3 Add experiment tracking and logging
+  - [ ] 7.3 Add experiment tracking and logging
     - Integrate wandb
     - Add comprehensive logging for training metrics and model performance
     - Create debugging utilities for multimodal training issues

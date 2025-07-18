@@ -146,7 +146,7 @@ def test_experiment_tracker():
             Mock(numel=lambda: 1000, requires_grad=True),
             Mock(numel=lambda: 500, requires_grad=False)
         ]
-        mock_model.__str__ = lambda: "Test Model Architecture"
+        mock_model.__str__ = Mock(return_value="Test Model Architecture")
         
         tracker.log_model_architecture(mock_model)
         
