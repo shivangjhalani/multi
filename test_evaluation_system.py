@@ -51,7 +51,7 @@ def create_mock_model_and_tokenizer():
         
         def parameters(self):
             # Return a dummy parameter to get device
-            return [torch.tensor([1.0])]
+            yield torch.tensor([1.0])
         
         def eval(self):
             pass
