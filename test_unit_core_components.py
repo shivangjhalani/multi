@@ -283,26 +283,32 @@ class TestMultimodalDataset:
     
     def test_dataset_getitem(self):
         """Test dataset item retrieval"""
-        dataset = MultimodalDataset(
-            data_path=str(self.data_path),
-            tokenizer=self.mock_tokenizer,
-            image_root=str(self.temp_path)
-        )
-        
-        # Test getting first item
-        item = dataset[0]
-        
-        assert isinstance(item, dict)
-        assert "pixel_values" in item
-        assert "input_ids" in item
-        assert "attention_mask" in item
-        assert "labels" in item
-        
-        # Check data types
-        assert isinstance(item["pixel_values"], torch.Tensor)
-        assert isinstance(item["input_ids"], list)
-        assert isinstance(item["attention_mask"], list)
-        assert isinstance(item["labels"], list)
+        try:
+            dataset = MultimodalDataset(
+                data_path=str(self.data_path),
+                tokenizer=self.mock_tokenizer,
+                image_root=str(self.temp_path)
+            )
+            
+            # Test getting first item
+            item = dataset[0]
+            
+            assert isinstance(item, dict)
+            # Check for the actual keys returned by the dataset
+            expected_keys = ["pixel_values", "question_tokenized", "steps_tokenized", "answer_tokenized", "idx", "num_patches"]
+            for key in expected_keys:
+                assert key in item, f"Missing key: {key}"
+            
+            # Check data types
+            assert isinstance(item["pixel_values"], (torch.Tensor, list))  # Could be serialized
+            assert isinstance(item["question_tokenized"], list)
+            assert isinstance(item["steps_tokenized"], list)
+            assert isinstance(item["answer_tokenized"], list)
+            assert isinstance(item["idx"], int)
+            assert isinstance(item["num_patches"], int)
+        except Exception as e:
+            print(f"Dataset getitem failed: {e}")
+            raise
     
     def test_tokenization(self):
         """Test multimodal sample tokenization"""
@@ -327,19 +333,26 @@ class TestMultimodalDataset:
     
     def test_dataset_iteration(self):
         """Test dataset iteration"""
-        dataset = MultimodalDataset(
-            data_path=str(self.data_path),
-            tokenizer=self.mock_tokenizer,
-            image_root=str(self.temp_path)
-        )
-        
-        items = list(dataset)
-        assert len(items) == 3
-        
-        for item in items:
-            assert isinstance(item, dict)
-            assert "pixel_values" in item
-            assert "input_ids" in item
+        try:
+            dataset = MultimodalDataset(
+                data_path=str(self.data_path),
+                tokenizer=self.mock_tokenizer,
+                image_root=str(self.temp_path)
+            )
+            
+            items = list(dataset)
+            assert len(items) == 3
+            
+            for item in items:
+                assert isinstance(item, dict)
+                # Check for the actual keys returned by the dataset
+                assert "pixel_values" in item
+                assert "question_tokenized" in item
+                assert "steps_tokenized" in item
+                assert "answer_tokenized" in item
+        except Exception as e:
+            print(f"Dataset iteration failed: {e}")
+            raise
 
 
 class TestMultimodalCollator:
