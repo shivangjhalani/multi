@@ -360,12 +360,40 @@ class TestMultimodalCollator:
     
     def setup_method(self):
         """Setup test fixtures"""
-        # Create mock tokenizer
+        # Create mock tokenizer with all required attributes
         self.mock_tokenizer = Mock()
         self.mock_tokenizer.pad_token_id = 0
         self.mock_tokenizer.latent_token_id = 50257
         self.mock_tokenizer.start_latent_id = 50258
         self.mock_tokenizer.end_latent_id = 50259
+        self.mock_tokenizer.padding_side = "right"
+        
+        # Mock the pad_without_fast_tokenizer_warning function
+        def mock_pad_function(tokenizer, features, padding=True, pad_to_multiple_of=None, return_tensors=None):
+            # Simple padding implementation for testing
+            max_len = max(len(f["input_ids"]) for f in features)
+            padded_features = {}
+            
+            # Pad input_ids
+            padded_input_ids = []
+            for f in features:
+                padded = f["input_ids"] + [tokenizer.pad_token_id] * (max_len - len(f["input_ids"]))
+                padded_input_ids.append(padded)
+            padded_features["input_ids"] = torch.tensor(padded_input_ids)
+            
+            # Pad attention_mask
+            if "attention_mask" in features[0]:
+                padded_attention_mask = []
+                for f in features:
+                    padded = f["attention_mask"] + [0] * (max_len - len(f["attention_mask"]))
+                    padded_attention_mask.append(padded)
+                padded_features["attention_mask"] = torch.tensor(padded_attention_mask)
+            
+            return padded_features
+        
+        # Patch the pad function
+        import multimodal_coconut.data.dataset
+        multimodal_coconut.data.dataset.pad_without_fast_tokenizer_warning = mock_pad_function
         
         # Create collator
         self.collator = MultimodalCollator(
