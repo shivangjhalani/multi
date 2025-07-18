@@ -234,14 +234,14 @@ for pass_idx in range(max_n_latents):
     - Add robustness tests for various image types and qualities
     - _Requirements: 6.1, 6.2, 6.4_
 
-- [-] 9. Create documentation and examples
-  - [-] 9.1 Write comprehensive documentation
+- [x] 9. Create documentation and examples
+  - [x] 9.1 Write comprehensive documentation
     - Create README with setup and usage instructions
     - Write API documentation for all major classes and functions
     - Add troubleshooting guide for common issues
     - _Requirements: 6.3, 6.4_
 
-  - [ ] 9.2 Implement example scripts and tutorials
+  - [x] 9.2 Implement example scripts and tutorials
     - Create example training scripts for different scenarios
     - Add inference examples with sample images and questions
     - Write tutorial notebooks demonstrating key features

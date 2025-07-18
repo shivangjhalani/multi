@@ -1,0 +1,27 @@
+[
+  {
+    "image": "examples/sample_images/cat.jpg",
+    "question": "What animal is in the image?",
+    "answer": "A cat"
+  },
+  {
+    "image": "examples/sample_images/kitchen.jpg", 
+    "question": "What room is shown in the image?",
+    "answer": "A kitchen"
+  },
+  {
+    "image": "examples/sample_images/car.jpg",
+    "question": "What color is the car?",
+    "answer": "Red"
+  },
+  {
+    "image": "examples/sample_images/park.jpg",
+    "question": "What activities can people do in this location?",
+    "answer": "People can walk, play, exercise, and relax in this park"
+  },
+  {
+    "image": "examples/sample_images/food.jpg",
+    "question": "What type of food is shown?",
+    "answer": "Pizza"
+  }
+]

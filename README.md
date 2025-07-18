@@ -18,30 +18,49 @@ CoCoNuT represents a paradigm shift from discrete textual reasoning steps to con
 
 ### Prerequisites
 
-- Python 3.8 or higher
-- CUDA-compatible GPU (recommended)
-- PyTorch 2.5.1 or higher
+- **Python**: 3.8 or higher (3.9 recommended)
+- **CUDA**: Compatible GPU with CUDA 11.8+ (for GPU acceleration)
+- **Memory**: At least 16GB RAM, 8GB+ GPU memory recommended
+- **Storage**: 10GB+ free space for models and data
 
-### Setup
+### Quick Setup
 
-1. Clone the repository:
+1. **Clone the repository**:
 ```bash
 git clone <repository-url>
 cd multimodal-coconut
 ```
 
-2. Create a virtual environment:
+2. **Create and activate environment**:
 ```bash
+# Using conda (recommended)
 conda create -n multimodal-coconut python=3.9 -y
 conda activate multimodal-coconut
+
+# Or using venv
+python -m venv multimodal-coconut
+source multimodal-coconut/bin/activate  # Linux/Mac
+# multimodal-coconut\Scripts\activate  # Windows
 ```
 
-3. Install dependencies:
+3. **Install PyTorch** (choose based on your CUDA version):
+```bash
+# CUDA 11.8
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# CUDA 12.1
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# CPU only (not recommended for training)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+```
+
+4. **Install dependencies**:
 ```bash
 pip install -r requirements.txt
 ```
 
-4. Install the package in development mode:
+5. **Install the package**:
 ```bash
 pip install -e .
 ```
@@ -52,6 +71,25 @@ Run the infrastructure test to verify everything is working:
 ```bash
 python test_infrastructure.py
 ```
+
+Expected output:
+```
+✓ All imports successful
+✓ Configuration system working
+✓ Model architecture functional
+✓ Data pipeline operational
+✓ Training utilities ready
+✓ Infrastructure test passed!
+```
+
+### Troubleshooting Installation
+
+If you encounter issues, see our [Troubleshooting Guide](docs/TROUBLESHOOTING.md) for common solutions.
+
+**Common fixes**:
+- **CUDA issues**: Check `nvidia-smi` and install matching PyTorch version
+- **Memory errors**: Ensure sufficient RAM/GPU memory
+- **Package conflicts**: Use a fresh virtual environment
 
 ## Quick Start
 
@@ -137,15 +175,100 @@ learning_rate: 1e-5
 num_epochs: 40
 ```
 
+## Documentation
+
+### API Reference
+- [API Documentation](docs/API.md) - Comprehensive API documentation for all classes and functions
+- [Troubleshooting Guide](docs/TROUBLESHOOTING.md) - Solutions for common issues and problems
+
+### Key Components
+- **Configuration System**: YAML-based configuration with validation and templates
+- **Model Architecture**: MultimodalCoconut class extending InternVL3 with continuous thoughts
+- **Data Pipeline**: Efficient multimodal data loading and preprocessing
+- **Training System**: Staged curriculum learning with distributed training support
+- **Utilities**: Logging, distributed training, and debugging tools
+
+## Usage Examples
+
+### Basic Training
+```python
+from multimodal_coconut import load_config, MultimodalCoconut
+from multimodal_coconut.training import MultimodalCoTTrainer
+
+# Load configuration
+config = load_config('args/multimodal_coconut.yaml')
+
+# Initialize model and trainer
+model = MultimodalCoconut.from_pretrained(config.model_id, config)
+trainer = MultimodalCoTTrainer(model, tokenizer, image_processor, config)
+
+# Start training
+trainer.train()
+```
+
+### Inference Example
+```python
+import torch
+from PIL import Image
+from multimodal_coconut import MultimodalCoconut
+
+# Load trained model
+model = MultimodalCoconut.from_pretrained('path/to/checkpoint')
+model.eval()
+
+# Process image and question
+image = Image.open('example.jpg')
+question = "What is happening in this image?"
+
+# Generate response
+with torch.no_grad():
+    response = model.generate(
+        pixel_values=process_image(image),
+        input_ids=tokenize_text(question),
+        max_new_tokens=100
+    )
+
+print(f"Answer: {decode_response(response)}")
+```
+
+### Custom Configuration
+```python
+from multimodal_coconut import create_config_from_template
+
+# Create custom configuration
+config = create_config_from_template(
+    'coconut',
+    c_thought=3,
+    max_latent_stage=6,
+    batch_size_training=4
+)
+
+# Save for later use
+config.save('args/my_experiment.yaml')
+```
+
 ## Development Status
 
-This project is currently in development. The infrastructure and core components have been implemented, with the following tasks remaining:
+This project is currently in active development. The infrastructure and core components have been implemented and tested:
 
-- [ ] Multimodal data pipeline implementation
-- [ ] CoCoNuT model architecture completion
-- [ ] Training loop implementation
-- [ ] Evaluation system
-- [ ] Comprehensive testing
+✅ **Completed**:
+- Configuration system with validation
+- Model architecture (MultimodalCoconut)
+- Data pipeline components
+- Training infrastructure
+- Distributed training support
+- Comprehensive documentation
+- Testing framework
+
+🚧 **In Progress**:
+- Full integration testing
+- Performance optimization
+- Advanced evaluation metrics
+
+📋 **Planned**:
+- Additional dataset support
+- Model compression techniques
+- Deployment utilities
 
 ## Contributing
 
