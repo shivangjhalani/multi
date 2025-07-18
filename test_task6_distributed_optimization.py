@@ -563,10 +563,8 @@ def test_configuration_support():
         # Test configuration loading
         from multimodal_coconut.config import Config
         
-        # Create config object
-        config = Config()
-        for key, value in config_data.items():
-            setattr(config, key, value)
+        # Create config object with the config data
+        config = Config(config_data)
         
         # Test that all Task 6 configuration options are accessible
         assert hasattr(config, 'use_fsdp')
