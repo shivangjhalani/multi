@@ -215,27 +215,27 @@ for pass_idx in range(max_n_latents):
     - Create debugging utilities for multimodal training issues
     - _Requirements: 5.4, 5.5_
 
-- [x] 8. Implement comprehensive testing framework
-  - [x] 8.1 Create unit tests for core components
+- [ ] 8. Implement comprehensive testing framework
+  - [ ] 8.1 Create unit tests for core components
     - Write tests for multimodal data pipeline components
     - Add tests for model forward pass and generation logic
     - Create tests for configuration system and utilities
     - _Requirements: 6.1, 6.2, 6.3_
 
-  - [x] 8.2 Implement integration tests
+  - [ ] 8.2 Implement integration tests
     - Create end-to-end training tests on small datasets
     - Add model compatibility tests with different InternVL3 variants
     - Implement distributed training integration tests
     - _Requirements: 6.4, 6.5, 6.6_
 
-  - [x] 8.3 Add performance and validation tests
+  - [ ] 8.3 Add performance and validation tests
     - Create memory usage and training speed benchmarks
     - Implement reasoning quality validation tests
     - Add robustness tests for various image types and qualities
     - _Requirements: 6.1, 6.2, 6.4_
 
-- [ ] 9. Create documentation and examples
-  - [ ] 9.1 Write comprehensive documentation
+- [-] 9. Create documentation and examples
+  - [-] 9.1 Write comprehensive documentation
     - Create README with setup and usage instructions
     - Write API documentation for all major classes and functions
     - Add troubleshooting guide for common issues
