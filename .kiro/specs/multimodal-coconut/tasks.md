@@ -222,13 +222,13 @@ for pass_idx in range(max_n_latents):
     - Create tests for configuration system and utilities
     - _Requirements: 6.1, 6.2, 6.3_
 
-  - [-] 8.2 Implement integration tests
+  - [x] 8.2 Implement integration tests
     - Create end-to-end training tests on small datasets
     - Add model compatibility tests with different InternVL3 variants
     - Implement distributed training integration tests
     - _Requirements: 6.4, 6.5, 6.6_
 
-  - [ ] 8.3 Add performance and validation tests
+  - [-] 8.3 Add performance and validation tests
     - Create memory usage and training speed benchmarks
     - Implement reasoning quality validation tests
     - Add robustness tests for various image types and qualities
