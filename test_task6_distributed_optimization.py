@@ -402,6 +402,11 @@ def test_integration():
     mock_config.min_batch_size = 1
     mock_config.memory_cleanup_frequency = 10
     
+    # Add StageManager required attributes
+    mock_config.epochs_per_stage = 5
+    mock_config.max_latent_stage = 3
+    mock_config.c_thought = 8
+    
     # Create trainer (should integrate all Task 6 features)
     with tempfile.TemporaryDirectory() as temp_dir:
         mock_config.save_path = temp_dir
