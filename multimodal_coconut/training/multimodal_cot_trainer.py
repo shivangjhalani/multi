@@ -21,7 +21,6 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.distributed as dist
 from torch.utils.data import DataLoader
-from torch.utils.data.distributed import DistributedSampler
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
@@ -36,6 +35,14 @@ from ..data.dataset import (
     MultimodalCollator
 )
 from .stage_manager import StageManager
+from ..utils.distributed import (
+    get_distributed_sampler,
+    synchronize_multimodal_batch,
+    reduce_tensor,
+    barrier
+)
+from ..utils.checkpoint import CheckpointManager
+from ..utils.memory import MemoryOptimizer, memory_efficient_forward
 
 
 class MultimodalCoTTrainer:
@@ -95,6 +102,26 @@ class MultimodalCoTTrainer:
         self.save_dir = Path(config.save_path) / config.name
         if rank == 0:
             self.save_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize checkpoint manager
+        self.checkpoint_manager = CheckpointManager(
+            save_dir=self.save_dir,
+            max_checkpoints=getattr(config, 'max_checkpoints', 5),
+            save_optimizer=getattr(config, 'save_optimizer_state', True),
+            save_scheduler=getattr(config, 'save_scheduler_state', True)
+        )
+        
+        # Initialize memory optimizer
+        self.memory_optimizer = MemoryOptimizer(
+            enable_gradient_checkpointing=getattr(config, 'enable_gradient_checkpointing', True),
+            enable_auto_batch_reduction=getattr(config, 'enable_auto_batch_reduction', True),
+            min_batch_size=getattr(config, 'min_batch_size', 1),
+            memory_cleanup_frequency=getattr(config, 'memory_cleanup_frequency', 100)
+        )
+        
+        # Setup gradient checkpointing
+        if self.memory_optimizer.enable_gradient_checkpointing:
+            self.model = self.memory_optimizer.setup_gradient_checkpointing(self.model)
         
         # Collator for multimodal data
         self.collator = MultimodalCollator(
@@ -198,15 +225,15 @@ class MultimodalCoTTrainer:
             no_special_marker=True  # No special markers for CoT
         )
         
-        # Create data loaders
+        # Create data loaders with distributed samplers
         train_dataloader = DataLoader(
             dataset_train,
             num_workers=getattr(self.config, 'num_workers', 1),
-            shuffle=False,  # Shuffling handled by DistributedSampler
+            shuffle=(self.world_size == 1),  # Only shuffle if not using distributed sampler
             pin_memory=True,
             batch_size=self.config.batch_size_training,
             collate_fn=self.collator,
-            sampler=DistributedSampler(dataset_train, shuffle=True) if self.world_size > 1 else None
+            sampler=get_distributed_sampler(dataset_train, shuffle=True)
         )
         
         val_loss_dataloader = DataLoader(
@@ -216,7 +243,7 @@ class MultimodalCoTTrainer:
             pin_memory=True,
             batch_size=getattr(self.config, 'batch_size_eval', self.config.batch_size_training),
             collate_fn=self.collator,
-            sampler=DistributedSampler(dataset_loss_val, shuffle=False) if self.world_size > 1 else None
+            sampler=get_distributed_sampler(dataset_loss_val, shuffle=False)
         )
         
         val_gen_dataloader = DataLoader(
@@ -225,7 +252,7 @@ class MultimodalCoTTrainer:
             pin_memory=True,
             batch_size=1,  # Generation typically done with batch_size=1
             collate_fn=self.collator,
-            sampler=DistributedSampler(dataset_gen_val, shuffle=False) if self.world_size > 1 else None
+            sampler=get_distributed_sampler(dataset_gen_val, shuffle=False)
         )
         
         if self.rank == 0:
@@ -307,9 +334,28 @@ class MultimodalCoTTrainer:
                 for key in batch.keys() if key not in ["idx", "_num_patches_list"]
             }
             
-            # Forward pass
-            outputs = self.model(**batch)
-            loss = outputs.loss / gradient_accumulation_steps
+            # Synchronize multimodal batch across processes for consistent training
+            if self.world_size > 1:
+                batch = synchronize_multimodal_batch(batch)
+            
+            # Memory-efficient forward pass with OOM handling
+            try:
+                # Forward pass
+                outputs = self.model(**batch)
+                loss = outputs.loss / gradient_accumulation_steps
+            except RuntimeError as e:
+                if "out of memory" in str(e).lower() and self.memory_optimizer.enable_auto_batch_reduction:
+                    # Handle OOM by reducing batch size
+                    def forward_fn(optimized_batch):
+                        return self.model(**optimized_batch)
+                    
+                    outputs, batch = self.memory_optimizer.handle_oom_error(batch, forward_fn)
+                    loss = outputs.loss / gradient_accumulation_steps
+                    
+                    if self.rank == 0:
+                        print(f"Recovered from OOM at step {step}")
+                else:
+                    raise e
             
             # Backward pass
             loss.backward()
@@ -332,6 +378,9 @@ class MultimodalCoTTrainer:
             num_batches += 1
             self.total_train_steps += 1
             
+            # Memory optimization step
+            self.memory_optimizer.step()
+            
             # Logging
             if self.wandb_run and self.rank == 0:
                 log_dict = {
@@ -340,6 +389,13 @@ class MultimodalCoTTrainer:
                     "train/loss": loss.item() * gradient_accumulation_steps,
                     "train/learning_rate": optimizer.param_groups[0]['lr']
                 }
+                
+                # Add memory optimization metrics
+                memory_stats = self.memory_optimizer.get_memory_stats()
+                for key, value in memory_stats.items():
+                    if isinstance(value, (int, float)):
+                        log_dict[f"memory/{key}"] = value
+                
                 self.wandb_run.log(log_dict)
             
             # Update progress bar
@@ -356,7 +412,7 @@ class MultimodalCoTTrainer:
         
         # Synchronize across processes
         if self.world_size > 1:
-            dist.barrier()
+            barrier()
         
         avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
         
@@ -391,6 +447,10 @@ class MultimodalCoTTrainer:
                     for key in batch.keys() if key not in ["idx", "_num_patches_list"]
                 }
                 
+                # Synchronize multimodal batch across processes for consistent validation
+                if self.world_size > 1:
+                    batch = synchronize_multimodal_batch(batch)
+                
                 # Forward pass
                 outputs = self.model(**batch)
                 loss = outputs.loss
@@ -421,35 +481,88 @@ class MultimodalCoTTrainer:
             'num_batches': num_batches
         }
     
-    def save_checkpoint(self, epoch: int, metrics: Dict[str, float]):
+    def save_checkpoint(self, 
+                       epoch: int, 
+                       metrics: Dict[str, float],
+                       optimizer: Optional[optim.Optimizer] = None,
+                       scheduler: Optional[Any] = None):
         """
-        Save model checkpoint.
+        Save model checkpoint using the checkpoint management system.
         
         Args:
             epoch: Current epoch number
             metrics: Training/validation metrics
+            optimizer: Optimizer state (optional)
+            scheduler: Scheduler state (optional)
         """
-        if self.rank != 0:
-            return
-        
-        checkpoint_path = self.save_dir / f"checkpoint_{epoch + 1}"
-        
-        # Get model state dict
-        if isinstance(self.model, (FSDP, DDP)):
-            state_dict = self.model.module.state_dict()
-        else:
-            state_dict = self.model.state_dict()
-        
-        # Save checkpoint
-        torch.save(state_dict, checkpoint_path)
-        print(f"Saved checkpoint: {checkpoint_path}")
-        
-        # Save best model if validation loss improved
+        # Determine if this is the best checkpoint
+        is_best = False
         if 'val_loss' in metrics and metrics['val_loss'] < self.best_val_loss:
             self.best_val_loss = metrics['val_loss']
-            best_path = self.save_dir / "best_cot_model"
-            torch.save(state_dict, best_path)
-            print(f"Saved best model: {best_path}")
+            is_best = True
+        
+        # Prepare stage information for CoT training
+        stage_info = {
+            'stage': 0,  # CoT pre-training is stage 0
+            'stage_type': 'cot',
+            'total_train_steps': self.total_train_steps,
+            'current_epoch': epoch
+        }
+        
+        # Save checkpoint using checkpoint manager
+        checkpoint_path = self.checkpoint_manager.save_checkpoint(
+            model=self.model,
+            epoch=epoch,
+            step=self.total_train_steps,
+            metrics=metrics,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            stage_info=stage_info,
+            config=self.config,
+            tokenizer=self.tokenizer,
+            is_best=is_best
+        )
+        
+        return checkpoint_path
+    
+    def load_checkpoint(self, 
+                       checkpoint_path: str,
+                       optimizer: Optional[optim.Optimizer] = None,
+                       scheduler: Optional[Any] = None) -> Dict[str, Any]:
+        """
+        Load checkpoint and restore training state.
+        
+        Args:
+            checkpoint_path: Path to checkpoint file
+            optimizer: Optimizer to restore state (optional)
+            scheduler: Scheduler to restore state (optional)
+            
+        Returns:
+            Checkpoint information dictionary
+        """
+        checkpoint_info = self.checkpoint_manager.load_checkpoint(
+            checkpoint_path=checkpoint_path,
+            model=self.model,
+            optimizer=optimizer,
+            scheduler=scheduler
+        )
+        
+        # Restore training state
+        if checkpoint_info:
+            self.current_epoch = checkpoint_info.get('epoch', 0)
+            self.total_train_steps = checkpoint_info.get('step', 0)
+            
+            # Restore stage information
+            stage_info = checkpoint_info.get('stage_info', {})
+            if 'total_train_steps' in stage_info:
+                self.total_train_steps = stage_info['total_train_steps']
+            
+            # Update best validation loss
+            metrics = checkpoint_info.get('metrics', {})
+            if 'val_loss' in metrics:
+                self.best_val_loss = metrics['val_loss']
+        
+        return checkpoint_info
     
     def train(self,
               train_data_path: str,
@@ -511,7 +624,7 @@ class MultimodalCoTTrainer:
             # Save checkpoint
             save_every = getattr(self.config, 'save_every_n_epochs', 5)
             if (epoch + 1) % save_every == 0 or epoch == self.config.num_epochs - 1:
-                self.save_checkpoint(epoch, epoch_metrics)
+                self.save_checkpoint(epoch, epoch_metrics, optimizer=optimizer)
             
             # Clean up memory
             if self.world_size > 1:

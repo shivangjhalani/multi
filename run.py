@@ -20,9 +20,13 @@ from multimodal_coconut import (
     validate_config,
     set_seed,
     setup_logging,
-    get_logger,
-    init_distributed_training,
-    is_main_process
+    get_logger
+)
+from multimodal_coconut.utils.distributed import (
+    setup_distributed_environment,
+    setup_multimodal_distributed_model,
+    is_main_process,
+    cleanup_distributed
 )
 from multimodal_coconut.model import MultimodalCoconut
 from multimodal_coconut.training import create_progressive_trainer
@@ -44,14 +48,21 @@ def main():
         print(f"Error loading configuration: {e}")
         sys.exit(1)
     
-    # Initialize distributed training if needed
-    local_rank, rank, world_size = 0, 0, 1
-    if config.get('use_fsdp', False) or config.get('use_ddp', False):
-        try:
-            local_rank, rank, world_size = init_distributed_training()
-        except Exception as e:
-            print(f"Error initializing distributed training: {e}")
-            sys.exit(1)
+    # Setup distributed training environment
+    try:
+        dist_info = setup_distributed_environment()
+        local_rank = dist_info['local_rank']
+        rank = dist_info['rank']
+        world_size = dist_info['world_size']
+        
+        if dist_info['distributed']:
+            print(f"Distributed training initialized: rank={rank}, world_size={world_size}, backend={dist_info['backend']}")
+        else:
+            print("Single-process training mode")
+            
+    except Exception as e:
+        print(f"Error setting up distributed environment: {e}")
+        sys.exit(1)
     
     # Set random seed
     set_seed(config.get('seed', 42))
@@ -115,16 +126,32 @@ def main():
         
         # Setup distributed training if needed
         if world_size > 1:
-            if config.get('use_fsdp', False):
-                from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-                model = FSDP(model)
-                if is_main_process():
-                    logger.info("Model wrapped with FSDP")
-            elif config.get('use_ddp', False):
-                from torch.nn.parallel import DistributedDataParallel as DDP
-                model = DDP(model, device_ids=[local_rank])
-                if is_main_process():
-                    logger.info("Model wrapped with DDP")
+            strategy = "fsdp" if config.get('use_fsdp', False) else "ddp"
+            
+            # Get distributed training configuration
+            dist_config = {}
+            if strategy == "fsdp":
+                # FSDP-specific configuration
+                if hasattr(config, 'fsdp_sharding_strategy'):
+                    dist_config['sharding_strategy'] = config.fsdp_sharding_strategy
+                if hasattr(config, 'fsdp_cpu_offload'):
+                    dist_config['cpu_offload'] = config.fsdp_cpu_offload
+                if hasattr(config, 'fsdp_mixed_precision'):
+                    dist_config['mixed_precision_policy'] = config.fsdp_mixed_precision
+            elif strategy == "ddp":
+                # DDP-specific configuration
+                dist_config['device_ids'] = [local_rank]
+                if hasattr(config, 'ddp_find_unused_parameters'):
+                    dist_config['find_unused_parameters'] = config.ddp_find_unused_parameters
+            
+            model = setup_multimodal_distributed_model(
+                model=model,
+                strategy=strategy,
+                **dist_config
+            )
+            
+            if is_main_process():
+                logger.info(f"Model wrapped with {strategy.upper()} for distributed training")
         
         # Create progressive trainer
         if is_main_process():
@@ -177,6 +204,11 @@ def main():
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
         raise e
+    
+    finally:
+        # Cleanup distributed training
+        if world_size > 1:
+            cleanup_distributed()
     
     if is_main_process():
         logger.info("Multimodal CoCoNuT training completed")

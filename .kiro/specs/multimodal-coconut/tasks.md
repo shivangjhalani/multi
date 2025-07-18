@@ -177,26 +177,26 @@ for pass_idx in range(max_n_latents):
     - Create throughput benchmarks for different batch sizes and configurations
     - _Requirements: 4.4, 4.5_
 
-- [ ] 6. Add distributed training and optimization support
-  - [ ] 6.1 Implement distributed training setup
+- [x] 6. Add distributed training and optimization support
+  - [x] 6.1 Implement distributed training setup
     - Add FSDP (Fully Sharded Data Parallel) support for large model training
     - Implement DDP (Distributed Data Parallel) as fallback option
     - Add proper synchronization for multimodal batches across processes
     - _Requirements: 5.5, 6.1_
 
-  - [ ] 6.2 Create checkpoint management system
+  - [x] 6.2 Create checkpoint management system
     - Implement model state saving and loading for multimodal CoCoNuT
     - Add training state preservation including stage progression
     - Create checkpoint validation and recovery mechanisms
     - _Requirements: 5.6, 6.1_
 
-  - [ ] 6.3 Add memory optimization features
+  - [x] 6.3 Add memory optimization features
     - Implement gradient checkpointing for memory efficiency
     - Add automatic batch size reduction on OOM errors
     - Create KV cache optimization for multimodal sequences
     - _Requirements: 6.1, 6.2_
 
-- [ ] 7. Create configuration and experiment management
+- [-] 7. Create configuration and experiment management
   - [ ] 7.1 Implement YAML configuration system
     - Create Config class with dynamic attribute setting
     - Add configuration validation and error handling

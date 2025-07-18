@@ -24,10 +24,23 @@ from .misc import (
     set_seed,
     count_parameters,
     get_device,
-    save_checkpoint,
-    load_checkpoint,
     create_optimizer,
     create_scheduler
+)
+
+from .checkpoint import (
+    CheckpointManager,
+    create_checkpoint_manager,
+    auto_resume_from_checkpoint
+)
+
+from .memory import (
+    MemoryOptimizer,
+    memory_efficient_forward,
+    optimize_multimodal_kv_cache,
+    create_memory_optimizer,
+    get_memory_usage,
+    reset_memory_stats
 )
 
 __all__ = [
@@ -51,8 +64,19 @@ __all__ = [
     'set_seed',
     'count_parameters',
     'get_device',
-    'save_checkpoint',
-    'load_checkpoint',
     'create_optimizer',
-    'create_scheduler'
+    'create_scheduler',
+    
+    # Checkpoint management
+    'CheckpointManager',
+    'create_checkpoint_manager',
+    'auto_resume_from_checkpoint',
+    
+    # Memory optimization
+    'MemoryOptimizer',
+    'memory_efficient_forward',
+    'optimize_multimodal_kv_cache',
+    'create_memory_optimizer',
+    'get_memory_usage',
+    'reset_memory_stats'
 ]
