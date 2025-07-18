@@ -1,0 +1,37 @@
+# Multimodal CoCoNuT Debug Configuration
+# Inherits from base_config.yaml with minimal settings for debugging
+
+# Base configuration (inherited)
+base_config: "args/base_config.yaml"
+
+# Experiment settings
+name: "multimodal-coconut-debug"
+debug: true
+
+# Training mode
+coconut: true
+cot: false
+
+# Minimal training parameters for quick debugging
+num_epochs: 2
+batch_size_training: 2
+batch_size_eval: 2
+max_train_samples: 100
+max_val_samples: 50
+
+# Frequent evaluation and saving for debugging
+eval_every_n_epochs: 1
+save_every_n_epochs: 1
+
+# Disable distributed training for debugging
+use_fsdp: false
+use_ddp: false
+num_workers: 0
+
+# Disable wandb for debugging
+use_wandb: false
+
+# CoCoNuT parameters (small for debugging)
+c_thought: 1
+max_latent_stage: 2
+epochs_per_stage: 1

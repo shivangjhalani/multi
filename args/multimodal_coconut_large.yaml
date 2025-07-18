@@ -1,0 +1,41 @@
+# Multimodal CoCoNuT Large-Scale Training Configuration
+# Inherits from base_config.yaml with settings optimized for large-scale training
+
+# Base configuration (inherited)
+base_config: "args/base_config.yaml"
+
+# Experiment settings
+name: "multimodal-coconut-large-scale"
+
+# Training mode
+coconut: true
+cot: false
+
+# Large-scale training parameters
+num_epochs: 100
+batch_size_training: 16
+batch_size_eval: 32
+gradient_accumulation_steps: 8
+
+# Extended CoCoNuT curriculum
+c_thought: 3
+max_latent_stage: 6
+epochs_per_stage: 10
+uniform_prob: 0.2
+
+# Optimization for large-scale training
+learning_rate: 5e-6
+weight_decay: 0.05
+warmup_steps: 2000
+gradient_clip_norm: 0.5
+
+# Less frequent evaluation to save time
+eval_every_n_epochs: 10
+save_every_n_epochs: 10
+
+# Enable advanced distributed training features
+use_fsdp: true
+bf16: true
+
+# Larger image processing
+max_num_patches: 16

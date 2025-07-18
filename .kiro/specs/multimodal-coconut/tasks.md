@@ -197,13 +197,13 @@ for pass_idx in range(max_n_latents):
     - _Requirements: 6.1, 6.2_
 
 - [ ] 7. Create configuration and experiment management
-  - [ ] 7.1 Implement YAML configuration system
+  - [x] 7.1 Implement YAML configuration system
     - Create Config class with dynamic attribute setting
     - Add configuration validation and error handling
     - Implement environment variable substitution in configs
     - _Requirements: 5.1, 5.2_
 
-  - [ ] 7.2 Create experiment configuration templates
+  - [-] 7.2 Create experiment configuration templates
     - Create YAML templates for different training scenarios (CoT, CoCoNuT, evaluation)
     - Add configuration inheritance and composition features
     - Implement runtime configuration updates for stage transitions

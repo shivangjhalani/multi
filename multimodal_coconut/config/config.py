@@ -153,12 +153,40 @@ def load_config_with_inheritance(config_path: str, base_configs: Optional[List[s
     
     # Load main configuration
     main_config = load_config(config_path, validate=False)
+    
+    # Check if main config specifies a base_config
+    if hasattr(main_config, 'base_config'):
+        base_path = main_config.base_config
+        # Remove base_config from main config to avoid conflicts
+        main_dict = main_config.to_dict()
+        del main_dict['base_config']
+        main_config = Config(main_dict)
+        
+        # Load and merge base config
+        base_config = load_config(base_path, validate=False)
+        merged_config = merged_config.merge(base_config)
+    
+    # Merge main configuration (takes precedence)
     merged_config = merged_config.merge(main_config)
     
     # Validate final merged configuration
     validate_config(merged_config)
     
     return merged_config
+
+
+def load_config_auto_inherit(config_path: str) -> Config:
+    """
+    Load configuration with automatic inheritance detection.
+    If the config file contains a 'base_config' field, it will be loaded first.
+    
+    Args:
+        config_path: Path to configuration file
+        
+    Returns:
+        Config object with inherited settings
+    """
+    return load_config_with_inheritance(config_path)
 
 
 def validate_config(config: Config) -> None:

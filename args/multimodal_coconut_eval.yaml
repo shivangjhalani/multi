@@ -1,0 +1,28 @@
+# Multimodal CoCoNuT Evaluation Configuration
+# Inherits from base_config.yaml and configures for evaluation only
+
+# Base configuration (inherited)
+base_config: "args/base_config.yaml"
+
+# Experiment settings
+name: "multimodal-coconut-eval"
+
+# Training mode (evaluation only)
+coconut: true
+cot: false
+only_eval: true
+
+# Evaluation parameters
+batch_size_eval: 32
+num_epochs: 1
+
+# Model loading (must be set to trained model path)
+load_model_path: "checkpoints/multimodal-coconut-aokvqa/best_model.pt"
+
+# Disable training-specific features
+use_wandb: false
+save_every_n_epochs: 999999  # Don't save during eval
+gradient_accumulation_steps: 1
+
+# Use test data for evaluation
+eval_data_path: "data/aokvqa/test.json"
