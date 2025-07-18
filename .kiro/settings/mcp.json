@@ -22,6 +22,22 @@
       "autoApprove": [
         "fetch"
       ]
+    },
+    "shrimp-task-manager": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-shrimp-task-manager"
+      ],
+      "env": {
+        "DATA_DIR": "/home/shivang/.local/share/mcp/shrimp-task-manager",
+        "TEMPLATES_USE": "en",
+        "ENABLE_GUI": "false"
+      },
+      "disabled": false,
+      "autoApprove": [
+        "plan_task"
+      ]
     }
   }
 }
