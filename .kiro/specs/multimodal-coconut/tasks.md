@@ -158,20 +158,20 @@ for pass_idx in range(max_n_latents):
     - Add uniform probability mixing for multi-stage data
     - _Requirements: 3.4, 3.5, 3.6_
 
-- [ ] 5. Create evaluation and benchmarking system
-  - [ ] 5.1 Implement A-OKVQA evaluation pipeline
+- [x] 5. Create evaluation and benchmarking system
+  - [x] 5.1 Implement A-OKVQA evaluation pipeline
     - Create evaluation dataset loader for A-OKVQA format
     - Implement VQA accuracy metrics calculation
     - Add support for multiple-choice and open-ended question evaluation
     - _Requirements: 4.1, 4.2_
 
-  - [ ] 5.2 Create reasoning quality analysis tools
+  - [x] 5.2 Create reasoning quality analysis tools
     - Implement tools to inspect continuous thought representations
     - Add visualization for latent space reasoning progression
     - Create comparison metrics between discrete and continuous reasoning
     - _Requirements: 4.3, 4.2_
 
-  - [ ] 5.3 Implement efficiency benchmarking
+  - [x] 5.3 Implement efficiency benchmarking
     - Add memory usage profiling during training and inference
     - Implement inference time measurement and comparison
     - Create throughput benchmarks for different batch sizes and configurations

@@ -1,0 +1,20 @@
+# Kiro ignore patterns
+# Add patterns for files/folders you want Kiro to ignore
+
+# Common patterns to ignore:
+node_modules/
+*.log
+.env
+.env.*
+dist/
+build/
+.git/
+__pycache__/
+*.pyc
+.DS_Store
+.vscode/
+.idea/
+venv
+
+# Add your specific patterns below:
+
