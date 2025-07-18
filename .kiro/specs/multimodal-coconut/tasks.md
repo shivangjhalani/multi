@@ -203,7 +203,7 @@ for pass_idx in range(max_n_latents):
     - Implement environment variable substitution in configs
     - _Requirements: 5.1, 5.2_
 
-  - [-] 7.2 Create experiment configuration templates
+  - [ ] 7.2 Create experiment configuration templates
     - Create YAML templates for different training scenarios (CoT, CoCoNuT, evaluation)
     - Add configuration inheritance and composition features
     - Implement runtime configuration updates for stage transitions
