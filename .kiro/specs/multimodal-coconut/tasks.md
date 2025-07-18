@@ -196,8 +196,8 @@ for pass_idx in range(max_n_latents):
     - Create KV cache optimization for multimodal sequences
     - _Requirements: 6.1, 6.2_
 
-- [-] 7. Create configuration and experiment management
-  - [ ] 7.1 Implement YAML configuration system
+- [ ] 7. Create configuration and experiment management
+  - [-] 7.1 Implement YAML configuration system
     - Create Config class with dynamic attribute setting
     - Add configuration validation and error handling
     - Implement environment variable substitution in configs
