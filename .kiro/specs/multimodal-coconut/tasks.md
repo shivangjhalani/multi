@@ -215,7 +215,7 @@ for pass_idx in range(max_n_latents):
     - Create debugging utilities for multimodal training issues
     - _Requirements: 5.4, 5.5_
 
-- [-] 8. Implement comprehensive testing framework
+- [x] 8. Implement comprehensive testing framework
   - [x] 8.1 Create unit tests for core components
     - Write tests for multimodal data pipeline components
     - Add tests for model forward pass and generation logic
@@ -228,7 +228,7 @@ for pass_idx in range(max_n_latents):
     - Implement distributed training integration tests
     - _Requirements: 6.4, 6.5, 6.6_
 
-  - [-] 8.3 Add performance and validation tests
+  - [x] 8.3 Add performance and validation tests
     - Create memory usage and training speed benchmarks
     - Implement reasoning quality validation tests
     - Add robustness tests for various image types and qualities

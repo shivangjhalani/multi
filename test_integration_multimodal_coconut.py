@@ -77,14 +77,15 @@ class MockInternVL3Model(nn.Module):
         
         # Mock outputs
         class MockOutputs:
-            def __init__(self):
-                self.logits = torch.randn(batch_size, seq_len, self.config.vocab_size)
+            def __init__(self, config):
+                self.config = config
+                self.logits = torch.randn(batch_size, seq_len, config.vocab_size)
                 self.loss = torch.tensor(0.5) if labels is not None else None
-                self.hidden_states = [torch.randn(batch_size, seq_len, self.config.hidden_size)]
+                self.hidden_states = [torch.randn(batch_size, seq_len, config.hidden_size)]
                 self.past_key_values = None
                 self.attentions = None
         
-        return MockOutputs()
+        return MockOutputs(self.config)
     
     def generate(self, **kwargs):
         """Mock generation"""
