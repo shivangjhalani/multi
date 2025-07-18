@@ -28,8 +28,29 @@ use_fsdp: false
 use_ddp: false
 num_workers: 0
 
-# Disable wandb for debugging
-use_wandb: false
+# Enhanced logging and debugging
+use_wandb: true
+wandb_project: "multimodal-coconut-debug"
+log_level: "DEBUG"
+
+# Enable comprehensive debugging
+enable_debugging: true
+debug_frequency: 10  # Debug every 10 steps
+debug_save_dir: "debug_outputs"
+debug_max_samples: 3
+
+# Metrics tracking
+metrics_window_size: 50
+
+# Early stopping for debugging
+early_stopping_patience: 5
+early_stopping_min_delta: 0.001
+
+# Memory optimization
+enable_gradient_checkpointing: true
+enable_auto_batch_reduction: true
+min_batch_size: 1
+memory_cleanup_frequency: 10
 
 # CoCoNuT parameters (small for debugging)
 c_thought: 1

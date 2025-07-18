@@ -67,9 +67,17 @@ def main():
     # Set random seed
     set_seed(config.get('seed', 42))
     
-    # Setup logging
+    # Setup logging with enhanced features
+    log_file = None
+    if is_main_process():
+        # Create logs directory
+        logs_dir = Path(config.get('save_path', 'checkpoints')) / config.get('name', 'experiment') / 'logs'
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        log_file = str(logs_dir / f"training_{rank}.log")
+    
     logger = setup_logging(
         log_level=config.get('log_level', 'INFO'),
+        log_file=log_file,
         use_wandb=config.get('use_wandb', True),
         wandb_project=config.get('wandb_project', 'multimodal-coconut'),
         wandb_config=config.to_dict()

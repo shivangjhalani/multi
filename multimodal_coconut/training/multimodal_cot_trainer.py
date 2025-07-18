@@ -43,6 +43,15 @@ from ..utils.distributed import (
 )
 from ..utils.checkpoint import CheckpointManager
 from ..utils.memory import MemoryOptimizer, memory_efficient_forward
+from ..utils.logging import (
+    get_logger,
+    log_metrics,
+    MetricsTracker,
+    ExperimentTracker,
+    MultimodalDebugger,
+    create_experiment_tracker,
+    create_multimodal_debugger
+)
 
 
 class MultimodalCoTTrainer:
@@ -85,6 +94,9 @@ class MultimodalCoTTrainer:
         self.world_size = world_size
         self.wandb_run = wandb_run
         
+        # Setup logger
+        self.logger = get_logger()
+        
         # Stage manager for curriculum
         self.stage_manager = StageManager(config)
         
@@ -102,6 +114,25 @@ class MultimodalCoTTrainer:
         self.save_dir = Path(config.save_path) / config.name
         if rank == 0:
             self.save_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize experiment tracker
+        if rank == 0:
+            self.experiment_tracker = create_experiment_tracker(config.to_dict())
+            if self.experiment_tracker.run:
+                self.experiment_tracker.log_model_architecture(model)
+        else:
+            self.experiment_tracker = None
+        
+        # Initialize metrics tracker
+        self.metrics_tracker = MetricsTracker(
+            window_size=getattr(config, 'metrics_window_size', 100)
+        )
+        
+        # Initialize debugger if enabled
+        if getattr(config, 'enable_debugging', False):
+            self.debugger = create_multimodal_debugger(config.to_dict())
+        else:
+            self.debugger = None
         
         # Initialize checkpoint manager
         self.checkpoint_manager = CheckpointManager(
@@ -381,12 +412,21 @@ class MultimodalCoTTrainer:
             # Memory optimization step
             self.memory_optimizer.step()
             
-            # Logging
-            if self.wandb_run and self.rank == 0:
+            # Enhanced logging with experiment tracker
+            current_loss = loss.item() * gradient_accumulation_steps
+            
+            # Update metrics tracker
+            self.metrics_tracker.update(
+                train_loss=current_loss,
+                learning_rate=optimizer.param_groups[0]['lr']
+            )
+            
+            # Log to experiment tracker
+            if self.experiment_tracker and self.rank == 0:
                 log_dict = {
                     "train/epoch": epoch + 1,
                     "train/step": self.total_train_steps,
-                    "train/loss": loss.item() * gradient_accumulation_steps,
+                    "train/loss": current_loss,
                     "train/learning_rate": optimizer.param_groups[0]['lr']
                 }
                 
@@ -396,7 +436,31 @@ class MultimodalCoTTrainer:
                     if isinstance(value, (int, float)):
                         log_dict[f"memory/{key}"] = value
                 
-                self.wandb_run.log(log_dict)
+                self.experiment_tracker.log_training_metrics(
+                    log_dict, 
+                    step=self.total_train_steps,
+                    epoch=epoch,
+                    stage=0  # CoT pre-training is stage 0
+                )
+                
+                # Log memory usage periodically
+                if self.total_train_steps % 100 == 0:
+                    self.experiment_tracker.log_memory_usage(step=self.total_train_steps)
+            
+            # Debug batch and model outputs if debugging is enabled
+            if self.debugger and self.rank == 0:
+                debug_frequency = getattr(self.config, 'debug_frequency', 1000)
+                if self.total_train_steps % debug_frequency == 0:
+                    self.debugger.debug_batch(batch, self.tokenizer, step=self.total_train_steps)
+                    self.debugger.debug_model_outputs(outputs, step=self.total_train_steps)
+                    
+                    # Debug gradients after backward pass
+                    if (step + 1) % gradient_accumulation_steps == 0:
+                        self.debugger.debug_gradients(self.model, step=self.total_train_steps)
+                
+                # Profile memory usage periodically
+                if self.total_train_steps % 500 == 0:
+                    self.debugger.profile_memory_usage(step=self.total_train_steps)
             
             # Update progress bar
             if self.rank == 0:
@@ -465,16 +529,32 @@ class MultimodalCoTTrainer:
         
         avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
         
-        # Log validation metrics
-        if self.wandb_run and self.rank == 0:
-            log_dict = {
-                "eval/loss": avg_loss,
-                "eval/epoch": epoch + 1
+        # Enhanced validation logging with experiment tracker
+        if self.experiment_tracker and self.rank == 0:
+            val_results = {
+                "val_loss": avg_loss,
+                "val_num_batches": num_batches
             }
-            self.wandb_run.log(log_dict)
+            self.experiment_tracker.log_validation_results(
+                val_results, 
+                step=self.total_train_steps
+            )
+        
+        # Update metrics tracker
+        self.metrics_tracker.update(val_loss=avg_loss)
         
         if self.rank == 0:
-            print(f"Validation loss: {avg_loss:.4f}")
+            self.logger.info(f"Validation loss: {avg_loss:.4f}")
+            
+            # Log recent metrics statistics
+            recent_stats = self.metrics_tracker.get_statistics()
+            if recent_stats:
+                self.logger.info("Recent training statistics:")
+                for metric, stats in recent_stats.items():
+                    self.logger.info(f"  {metric}: mean={stats['mean']:.4f}, "
+                                   f"std={stats['std']:.4f}, "
+                                   f"min={stats['min']:.4f}, "
+                                   f"max={stats['max']:.4f}")
         
         return {
             'val_loss': avg_loss,
