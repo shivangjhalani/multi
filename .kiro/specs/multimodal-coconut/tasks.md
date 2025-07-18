@@ -216,7 +216,7 @@ for pass_idx in range(max_n_latents):
     - _Requirements: 5.4, 5.5_
 
 - [-] 8. Implement comprehensive testing framework
-  - [-] 8.1 Create unit tests for core components
+  - [ ] 8.1 Create unit tests for core components
     - Write tests for multimodal data pipeline components
     - Add tests for model forward pass and generation logic
     - Create tests for configuration system and utilities
