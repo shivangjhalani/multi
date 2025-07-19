@@ -52,8 +52,7 @@ def mock_base_model():
             hidden_states=[torch.randn(batch_size, seq_len, 64)]
         )
     
-    model.forward = forward_mock
-    model.return_value = model.forward
+    model.forward.return_value = forward_mock()
     
     return model
 
@@ -155,10 +154,11 @@ def test_attention_mask_and_position_ids_slicing(coconut_model, mock_base_model)
 
     # First call: process up to latent token (3 tokens)
     call1_kwargs = mock_base_model.call_args_list[0][1]
+    segment_len = 4  # Includes the injected thought vector
     # The current buggy implementation passes the full-length attention_mask
-    assert call1_kwargs['attention_mask'].shape[1] != input_ids.shape[1]
+    assert call1_kwargs['attention_mask'].shape[1] == segment_len
     
-    # Second call: process remaining tokens (3 tokens)
+    # Second call: process remaining tokens
     call2_kwargs = mock_base_model.call_args_list[1][1]
     # The current buggy implementation passes the full-length position_ids
     assert call2_kwargs['position_ids'].shape[1] != input_ids.shape[1]
