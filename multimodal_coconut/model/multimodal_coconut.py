@@ -725,9 +725,9 @@ def create_multimodal_coconut_model(config: Config) -> Tuple[MultimodalCoconut, 
     )
     
     # Resize token embeddings to accommodate new CoCoNuT tokens
-    # This must be done on the base_model, not the language_model submodule
-    logger.info(f"Resizing token embeddings for the base model to match tokenizer size: {len(tokenizer)}")
-    base_model.resize_token_embeddings(len(tokenizer))
+    # This must be done on the language_model submodule, not the base_model
+    logger.info(f"Resizing token embeddings for the language model to match tokenizer size: {len(tokenizer)}")
+    base_model.language_model.resize_token_embeddings(len(tokenizer))
     logger.info(f"✓ Token embeddings resized successfully")
     
     # Set the img_context_token_id for multimodal processing

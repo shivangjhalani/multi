@@ -17,7 +17,7 @@ def real_model_and_tokenizer():
     """Loads the real InternVL model and tokenizer."""
     config = create_config_from_template('debug')
     # Use a smaller model for faster testing if available, otherwise use the default.
-    config.model_id = "OpenGVLab/InternVL3-1B-Pretrained" 
+    config.model_id = "OpenGVLab/InternVL-1.8B-V1-5"
     model, tokenizer = create_multimodal_coconut_model(config)
     return model, tokenizer
 
