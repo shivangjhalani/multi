@@ -299,12 +299,34 @@ class MultimodalCoconut(nn.Module):
             inputs_embeds = wte(padded_segment_ids)
             
             # Inject thought vectors from the previous step
-            for b, vec in thought_vectors.items():
-                # Prepend the thought vector to the embeddings
-                inputs_embeds[b] = torch.cat([vec.unsqueeze(0), inputs_embeds[b]], dim=0)
-                # Adjust attention mask
-                new_mask = torch.cat([torch.ones(1, dtype=torch.long, device=input_ids.device), segment_attention_mask[b]], dim=0)
-                segment_attention_mask[b] = new_mask[:-1] # Keep length consistent
+            # We need to handle this carefully to maintain proper tensor dimensions
+            if thought_vectors:
+                # Create a new inputs_embeds tensor with space for thought vectors
+                batch_size, seq_len, hidden_size = inputs_embeds.shape
+                new_inputs_embeds = []
+                new_attention_masks = []
+                
+                for b in range(batch_size):
+                    if b in thought_vectors:
+                        # Prepend the thought vector to this batch item
+                        thought_vec = thought_vectors[b].unsqueeze(0)  # [1, hidden_size]
+                        batch_embeds = torch.cat([thought_vec, inputs_embeds[b]], dim=0)  # [seq_len + 1, hidden_size]
+                        # Truncate to keep original sequence length
+                        batch_embeds = batch_embeds[:seq_len]
+                        
+                        # Adjust attention mask - add 1 for thought vector, truncate to original length
+                        thought_mask = torch.ones(1, dtype=torch.long, device=input_ids.device)
+                        batch_mask = torch.cat([thought_mask, segment_attention_mask[b]], dim=0)
+                        batch_mask = batch_mask[:seq_len]  # Keep original length
+                    else:
+                        batch_embeds = inputs_embeds[b]
+                        batch_mask = segment_attention_mask[b]
+                    
+                    new_inputs_embeds.append(batch_embeds)
+                    new_attention_masks.append(batch_mask)
+                
+                inputs_embeds = torch.stack(new_inputs_embeds, dim=0)
+                segment_attention_mask = torch.stack(new_attention_masks, dim=0)
 
 
             # Create image_flags if pixel_values are present

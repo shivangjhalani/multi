@@ -32,14 +32,6 @@
         "--repository",
         "/home/shivang/shivang/projs/cdsaml/final/"
       ]
-    },
-    "filesystem": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-filesystem",
-        "/home/.gemini/mcp/"
-      ]
     }
   }
 }
