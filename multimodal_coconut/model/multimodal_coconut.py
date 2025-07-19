@@ -313,12 +313,15 @@ class MultimodalCoconut(nn.Module):
                 iter_image_flags = torch.ones(batch_size, 1, dtype=torch.long, device=input_ids.device)
 
             # Forward pass for the current segment
-            outputs = self.base_model.language_model(
+            # We call the main base_model and pass inputs_embeds.
+            # The base model is responsible for merging multimodal inputs.
+            outputs = self.base_model(
                 inputs_embeds=inputs_embeds,
                 attention_mask=segment_attention_mask,
                 position_ids=segment_position_ids,
                 past_key_values=current_past_key_values, # Use cache from previous segment
-                vision_hidden_states=vision_hidden_states,
+                pixel_values=pixel_values, # Pass pixel values for the base model to process
+                image_flags=iter_image_flags,
                 use_cache=True,
                 output_attentions=output_attentions,
                 output_hidden_states=True, # Needed for the next thought vector

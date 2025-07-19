@@ -1,0 +1,37 @@
+{
+  "mcpServers": {
+    "context7": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ],
+      "env": {
+        "DEFAULT_MINIMUM_TOKENS": ""
+      }
+    },
+    "memory": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-memory"
+      ]
+    },
+    "sentry": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-sentry",
+        "--auth-token",
+        "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"
+      ]
+    },
+    "git": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-git",
+        "--repository",
+        "/home/shivang/shivang/projs/cdsaml/final/"
+      ]
+    }
+  }
+}
