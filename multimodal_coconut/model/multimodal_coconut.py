@@ -174,6 +174,7 @@ class MultimodalCoconut(nn.Module):
             )
         
         # Multimodal CoCoNuT forward pass with iterative processing
+        logger.info("DEBUG: Using iterative multimodal forward pass (latent tokens found)")
         return self._multimodal_forward_pass(
             input_ids=input_ids,
             latent_indices=latent_indices,
@@ -244,13 +245,14 @@ class MultimodalCoconut(nn.Module):
         max_n_latents = max([len(l) for l in latent_lists]) if latent_lists else 0
 
         # Extract visual features once, as they are constant across segments
-        vision_hidden_states = self.base_model.vision_model(pixel_values=pixel_values)[0] if pixel_values is not None else None
+        # Use InternVL's extract_feature method to get properly processed visual embeddings
+        vit_embeds = self.base_model.extract_feature(pixel_values) if pixel_values is not None else None
         
         # DEBUG: Log visual feature extraction
-        if vision_hidden_states is not None:
-            logger.info(f"DEBUG: Extracted vision_hidden_states with shape: {vision_hidden_states.shape}")
+        if vit_embeds is not None:
+            logger.info(f"DEBUG: Extracted vit_embeds with shape: {vit_embeds.shape}")
         else:
-            logger.info("DEBUG: No pixel_values provided, vision_hidden_states is None")
+            logger.info("DEBUG: No pixel_values provided, vit_embeds is None")
 
         for i in range(max_n_latents + 1): # +1 for the final segment
             
@@ -333,6 +335,32 @@ class MultimodalCoconut(nn.Module):
             # Get embeddings for the current segments
             inputs_embeds = wte(padded_segment_ids)
             
+            # CRITICAL FIX: Replace image context tokens with visual embeddings
+            # This is the key missing piece that makes visual processing work
+            if vit_embeds is not None and hasattr(self.base_model, 'img_context_token_id') and self.base_model.img_context_token_id is not None:
+                # DEBUG: Log image context token processing
+                logger.info(f"DEBUG: Processing image context tokens with ID: {self.base_model.img_context_token_id}")
+                
+                # Flatten for processing (following InternVL pattern)
+                batch_size, seq_len, hidden_size = inputs_embeds.shape
+                inputs_embeds_flat = inputs_embeds.reshape(batch_size * seq_len, hidden_size)
+                padded_segment_ids_flat = padded_segment_ids.reshape(batch_size * seq_len)
+                
+                # Find image context token positions
+                selected = (padded_segment_ids_flat == self.base_model.img_context_token_id)
+                
+                if selected.sum() > 0:
+                    logger.info(f"DEBUG: Found {selected.sum()} image context tokens to replace")
+                    # Replace image context token embeddings with visual features
+                    vit_embeds_flat = vit_embeds.reshape(-1, hidden_size)
+                    n_tokens = selected.sum()
+                    inputs_embeds_flat[selected] = inputs_embeds_flat[selected] * 0.0 + vit_embeds_flat[:n_tokens]
+                else:
+                    logger.info("DEBUG: No image context tokens found in segment")
+                
+                # Reshape back
+                inputs_embeds = inputs_embeds_flat.reshape(batch_size, seq_len, hidden_size)
+            
             # Inject thought vectors from the previous step
             # We need to handle this carefully to maintain proper tensor dimensions
             if thought_vectors:
@@ -381,12 +409,12 @@ class MultimodalCoconut(nn.Module):
             # Create image_flags for this iteration
             iter_image_flags = torch.ones(batch_size, 1, dtype=torch.long, device=inputs_embeds.device) if pixel_values is not None else None
             
-            # DEBUG: Log that we're calling language_model directly without visual features
-            logger.info(f"DEBUG: Calling language_model directly for segment {i}")
-            logger.info(f"DEBUG: vision_hidden_states available but NOT used: {vision_hidden_states is not None}")
+            # DEBUG: Log that we're calling language_model with processed embeddings
+            logger.info(f"DEBUG: Calling language_model for segment {i}")
+            logger.info(f"DEBUG: Visual embeddings processed and injected: {vit_embeds is not None}")
             
-            # Forward pass using the base model directly with manual embedding injection
-            # Since InternVLChatModel doesn't support inputs_embeds, we need to use its language_model directly
+            # Forward pass using the base model's language model with processed embeddings
+            # Visual features are now properly injected into inputs_embeds above
             outputs = self.base_model.language_model(
                 inputs_embeds=inputs_embeds,
                 attention_mask=segment_attention_mask,
@@ -396,7 +424,6 @@ class MultimodalCoconut(nn.Module):
                 output_attentions=output_attentions,
                 output_hidden_states=True, # Needed for the next thought vector
                 return_dict=True,
-                vision_hidden_states=vision_hidden_states,  # Pass visual features
             )
             
             current_past_key_values = outputs.past_key_values
