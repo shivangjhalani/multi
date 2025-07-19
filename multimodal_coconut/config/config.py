@@ -428,6 +428,7 @@ def create_default_config() -> Dict[str, Any]:
         "load_model_path": "None",
         "coconut": True,
         "cot": False,
+        "torch_dtype": "bfloat16",
         
         # CoCoNuT parameters
         "c_thought": 2,

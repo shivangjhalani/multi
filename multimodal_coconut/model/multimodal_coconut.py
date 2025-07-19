@@ -713,10 +713,19 @@ def create_multimodal_coconut_model(config: Config) -> Tuple[MultimodalCoconut, 
     logger.info(f"Special token IDs: start={start_latent_id}, end={end_latent_id}, latent={latent_id}, eos={eos_token_id}")
     
     # Load base InternVL3 model
+    # Determine torch_dtype from config
+    dtype_str = getattr(config, 'torch_dtype', 'bfloat16')
+    if dtype_str == 'bfloat16':
+        torch_dtype = torch.bfloat16
+    elif dtype_str == 'float16':
+        torch_dtype = torch.float16
+    else:
+        torch_dtype = torch.float32
+
     base_model = AutoModel.from_pretrained(
         config.model_id,
         trust_remote_code=True,
-        torch_dtype=torch.bfloat16,
+        torch_dtype=torch_dtype,
         low_cpu_mem_usage=True,
         use_flash_attn=getattr(config, 'use_flash_attn', True)
     )

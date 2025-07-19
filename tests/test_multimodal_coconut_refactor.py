@@ -24,7 +24,7 @@ def real_model_and_tokenizer():
 @pytest.fixture
 def pixel_values():
     """Creates a dummy pixel_values tensor."""
-    return torch.randn(1, 3, 448, 448)
+    return torch.randn(1, 3, 448, 448, dtype=torch.bfloat16)
 
 # --- Test Cases ---
 
