@@ -258,7 +258,20 @@ class MultimodalCoconut(nn.Module):
                         if thought_pos >= last_processed_pos[b]:
                             # The position relative to the last segment's output
                             relative_pos = thought_pos - last_processed_pos[b]
-                            thought_vectors[b] = last_hidden_states[b, relative_pos, :]
+                            if relative_pos < last_hidden_states.shape[1]:
+                                thought_vectors[b] = last_hidden_states[b, relative_pos, :]
+
+            # Check if all segments would be empty - if so, break early
+            all_empty = True
+            for b in range(batch_size):
+                start_pos = last_processed_pos[b]
+                end_pos = latent_lists[b][i] if i < len(latent_lists[b]) else seq_len
+                if start_pos < end_pos:
+                    all_empty = False
+                    break
+            
+            if all_empty:
+                break
 
             for b in range(batch_size):
                 start_pos = last_processed_pos[b]
@@ -267,6 +280,11 @@ class MultimodalCoconut(nn.Module):
 
                 # Get the current segment
                 current_segment_ids = input_ids[b, start_pos:end_pos]
+                
+                # Skip empty segments
+                if current_segment_ids.size(0) == 0:
+                    current_segment_ids = torch.tensor([self.eos_token_id], dtype=torch.long, device=input_ids.device)
+                
                 segment_input_ids.append(current_segment_ids)
                 
                 # Update the max length for padding
