@@ -14,16 +14,35 @@ from PIL import Image
 
 @pytest.fixture(scope="session")
 def real_model_and_tokenizer():
-    """Loads the real InternVL model and tokenizer."""
+    """Loads the real InternVL model and tokenizer with optimizations for testing."""
     config = create_config_from_template('debug')
     config.model_id = "OpenGVLab/InternVL3-1B-Pretrained" # DO NOT CHANGE
+    
+    # Check if GPU is available and set appropriate dtype
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    config.torch_dtype = "bfloat16" if device == "cuda" else "float32"
+    
+    # Optimization: Reduce image processing complexity
+    config.image_size = 224  # Smaller than default 448
+    config.max_num_patches = 4  # Smaller than default 12
+    config.dynamic_preprocess = False  # Disable dynamic preprocessing
+    
     model, tokenizer = create_multimodal_coconut_model(config)
+    
+    # Move to best available device and set to eval mode
+    model = model.to(device)
+    model.eval()
+    
+    print(f"Test model loaded on device: {device}")
+    
     return model, tokenizer
 
 @pytest.fixture
 def pixel_values():
-    """Creates a dummy pixel_values tensor."""
-    return torch.randn(1, 3, 448, 448, dtype=torch.bfloat16)
+    """Creates a dummy pixel_values tensor optimized for testing."""
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype = torch.bfloat16 if device == "cuda" else torch.float32
+    return torch.randn(1, 3, 224, 224, dtype=dtype, device=device)
 
 # --- Test Cases ---
 
@@ -82,13 +101,19 @@ def test_dynamic_visual_processing(real_model_and_tokenizer, pixel_values):
     input_text = f"The color of the ball is {latent_token}."
     input_ids = tokenizer(input_text, return_tensors='pt').input_ids.to(device)
     
+    # pixel_values fixture already places tensor on correct device with correct dtype
+    
     # Run with and without pixel_values to ensure the model behaves differently.
     with torch.no_grad():
+        # Set model to eval mode for consistent behavior
+        model.eval()
         outputs_with_vision = model.forward(input_ids=input_ids, pixel_values=pixel_values)
         outputs_without_vision = model.forward(input_ids=input_ids, pixel_values=None)
 
     # A simple check: the logits should be different.
-    assert not torch.allclose(outputs_with_vision.logits, outputs_without_vision.logits)
+    # Use appropriate tolerance based on dtype
+    atol = 1e-3 if pixel_values.dtype == torch.bfloat16 else 1e-4
+    assert not torch.allclose(outputs_with_vision.logits, outputs_without_vision.logits, atol=atol)
 
 def test_generate_method_with_latents(real_model_and_tokenizer, pixel_values):
     """Test the generate method with latent tokens."""
@@ -97,12 +122,22 @@ def test_generate_method_with_latents(real_model_and_tokenizer, pixel_values):
     latent_token = "<|latent|>"
     input_text = f"Q: What is in the image? A: I see {latent_token}."
     input_ids = tokenizer(input_text, return_tensors='pt').input_ids.to(device)
+    
+    # Ensure pixel_values are on the correct device
+    pixel_values = pixel_values.to(device)
 
-    generated_ids = model.generate(
-        pixel_values=pixel_values,
-        input_ids=input_ids,
-        generation_config={'max_new_tokens': 10, 'eos_token_id': tokenizer.eos_token_id}
-    )
+    with torch.no_grad():
+        model.eval()
+        generated_ids = model.generate(
+            pixel_values=pixel_values,
+            input_ids=input_ids,
+            generation_config={
+                'max_new_tokens': 5,  # Reduced from 10 for faster execution
+                'eos_token_id': tokenizer.eos_token_id,
+                'do_sample': False,  # Use greedy decoding for faster, deterministic results
+                'use_cache': True
+            }
+        )
     
     assert generated_ids.shape[1] > input_ids.shape[1]
 

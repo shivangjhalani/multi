@@ -293,6 +293,9 @@ class MultimodalCoconut(nn.Module):
 
                 last_processed_pos[b] = end_pos
             
+            # Ensure minimum sequence length to avoid empty tensors
+            max_segment_len = max(max_segment_len, 1)
+            
             # Pad the segments to the same length for batch processing
             padded_segment_ids = torch.full((batch_size, max_segment_len), self.eos_token_id,
                                             dtype=torch.long, device=input_ids.device)
