@@ -52,7 +52,7 @@ def mock_base_model():
             hidden_states=[torch.randn(batch_size, seq_len, 64)]
         )
     
-    model.forward.return_value = forward_mock()
+    model.forward.side_effect = forward_mock
     
     return model
 
@@ -82,7 +82,7 @@ def test_standard_forward_pass_no_latents(coconut_model):
     
     outputs = coconut_model.forward(input_ids=input_ids, pixel_values=pixel_values)
     
-    assert 'logits' in outputs
+    assert hasattr(outputs, 'logits')
     coconut_model.base_model.forward.assert_called_once()
 
 def test_iterative_forward_pass_with_latents(coconut_model, mock_base_model):
