@@ -305,21 +305,18 @@ class MultimodalCoconut(nn.Module):
 
 
             # Forward pass for the current segment
-            outputs = self.base_model(
-                pixel_values=pixel_values, # Pass visual info at each step
-                input_ids=None,
+            vision_hidden_states = self.base_model.vision_model(pixel_values=pixel_values)[0] if pixel_values is not None else None
+            
+            outputs = self.base_model.language_model(
                 inputs_embeds=inputs_embeds,
                 attention_mask=segment_attention_mask,
                 position_ids=segment_position_ids,
-                image_flags=image_flags,
                 past_key_values=current_past_key_values, # Use cache from previous segment
-                labels=None,
+                vision_hidden_states=vision_hidden_states,
                 use_cache=True,
                 output_attentions=output_attentions,
                 output_hidden_states=True, # Needed for the next thought vector
                 return_dict=True,
-                num_patches_list=num_patches_list,
-                **kwargs
             )
             
             current_past_key_values = outputs.past_key_values
@@ -516,15 +513,15 @@ class MultimodalCoconut(nn.Module):
         
         generated_ids = [ids.tolist() for ids in input_ids]
 
+        vision_hidden_states = self.base_model.vision_model(pixel_values=pixel_values)[0] if pixel_values is not None else None
+        
         for _ in range(max_new_tokens):
-            outputs = self.base_model.forward(
-                pixel_values=pixel_values, # Pass pixel_values in each generation step
+            outputs = self.base_model.language_model.forward(
                 input_ids=next_token_ids,
                 past_key_values=past_key_values,
                 use_cache=True,
                 return_dict=True,
-                image_flags=image_flags,
-                num_patches_list=num_patches_list
+                vision_hidden_states=vision_hidden_states,
             )
             past_key_values = outputs.past_key_values
             next_token_logits = outputs.logits[:, -1, :]
