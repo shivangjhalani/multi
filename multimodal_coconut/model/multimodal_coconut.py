@@ -307,6 +307,11 @@ class MultimodalCoconut(nn.Module):
                 segment_attention_mask[b] = new_mask[:-1] # Keep length consistent
 
 
+            # Create image_flags if pixel_values are present
+            iter_image_flags = None
+            if pixel_values is not None:
+                iter_image_flags = torch.ones(batch_size, 1, dtype=torch.long, device=input_ids.device)
+
             # Forward pass for the current segment
             outputs = self.base_model.language_model(
                 inputs_embeds=inputs_embeds,
@@ -314,6 +319,7 @@ class MultimodalCoconut(nn.Module):
                 position_ids=segment_position_ids,
                 past_key_values=current_past_key_values, # Use cache from previous segment
                 vision_hidden_states=vision_hidden_states,
+                image_flags=iter_image_flags,
                 use_cache=True,
                 output_attentions=output_attentions,
                 output_hidden_states=True, # Needed for the next thought vector
