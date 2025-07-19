@@ -235,6 +235,9 @@ class MultimodalCoconut(nn.Module):
         # Determine the number of latent segments to process
         max_n_latents = max([len(l) for l in latent_lists]) if latent_lists else 0
 
+        # Extract visual features once, as they are constant across segments
+        vision_hidden_states = self.base_model.vision_model(pixel_values=pixel_values)[0] if pixel_values is not None else None
+
         for i in range(max_n_latents + 1): # +1 for the final segment
             
             # Prepare a batch of segments for the current iteration
@@ -305,8 +308,6 @@ class MultimodalCoconut(nn.Module):
 
 
             # Forward pass for the current segment
-            vision_hidden_states = self.base_model.vision_model(pixel_values=pixel_values)[0] if pixel_values is not None else None
-            
             outputs = self.base_model.language_model(
                 inputs_embeds=inputs_embeds,
                 attention_mask=segment_attention_mask,
@@ -469,7 +470,6 @@ class MultimodalCoconut(nn.Module):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
-            num_patches_list=num_patches_list,
             **filtered_kwargs
         )
     
