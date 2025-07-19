@@ -319,7 +319,6 @@ class MultimodalCoconut(nn.Module):
                 position_ids=segment_position_ids,
                 past_key_values=current_past_key_values, # Use cache from previous segment
                 vision_hidden_states=vision_hidden_states,
-                image_flags=iter_image_flags,
                 use_cache=True,
                 output_attentions=output_attentions,
                 output_hidden_states=True, # Needed for the next thought vector
