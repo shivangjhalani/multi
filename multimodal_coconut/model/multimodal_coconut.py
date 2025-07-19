@@ -312,16 +312,25 @@ class MultimodalCoconut(nn.Module):
             if pixel_values is not None:
                 iter_image_flags = torch.ones(batch_size, 1, dtype=torch.long, device=input_ids.device)
 
-            # Forward pass for the current segment
-            # We call the main base_model and pass inputs_embeds.
-            # The base model is responsible for merging multimodal inputs.
-            outputs = self.base_model(
+            # Convert inputs_embeds to input_ids for InternVLChatModel compatibility
+            # The InternVLChatModel expects input_ids, not inputs_embeds directly
+            # We need to work around this by using the base model's language_model directly
+            # since InternVLChatModel doesn't accept inputs_embeds in its forward method
+            
+            # Create dummy input_ids with the same shape as inputs_embeds for the batch
+            batch_size, seq_len, _ = inputs_embeds.shape
+            dummy_input_ids = torch.zeros((batch_size, seq_len), dtype=torch.long, device=inputs_embeds.device)
+            
+            # Create image_flags for this iteration
+            iter_image_flags = torch.ones(batch_size, 1, dtype=torch.long, device=inputs_embeds.device) if pixel_values is not None else None
+            
+            # Forward pass using the base model directly with manual embedding injection
+            # Since InternVLChatModel doesn't support inputs_embeds, we need to use its language_model directly
+            outputs = self.base_model.language_model(
                 inputs_embeds=inputs_embeds,
                 attention_mask=segment_attention_mask,
                 position_ids=segment_position_ids,
                 past_key_values=current_past_key_values, # Use cache from previous segment
-                pixel_values=pixel_values, # Pass pixel values for the base model to process
-                image_flags=iter_image_flags,
                 use_cache=True,
                 output_attentions=output_attentions,
                 output_hidden_states=True, # Needed for the next thought vector
