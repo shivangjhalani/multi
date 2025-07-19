@@ -101,6 +101,7 @@ class MultimodalCoconut(nn.Module):
             return base_model.embeddings.weight.shape[1]
         
         # Default for tests
+        logger.warning("Could not determine hidden size from base model, using default 64")
         return 64
     
     def forward(self,
@@ -147,8 +148,15 @@ class MultimodalCoconut(nn.Module):
         # Find all latent token positions in the batch
         latent_indices = (input_ids == self.latent_token_id).nonzero(as_tuple=False)
         
+        # DEBUG: Log whether latent tokens are found
+        logger.info(f"DEBUG: Found {len(latent_indices)} latent token positions")
+        logger.info(f"DEBUG: Latent token ID: {self.latent_token_id}")
+        logger.info(f"DEBUG: Input IDs shape: {input_ids.shape}")
+        logger.info(f"DEBUG: Input IDs: {input_ids}")
+        
         if len(latent_indices) == 0:
             # No latent tokens - use standard multimodal forward pass
+            logger.info("DEBUG: Using standard multimodal forward pass (no latent tokens)")
             return self._standard_multimodal_forward(
                 input_ids=input_ids,
                 pixel_values=pixel_values,
