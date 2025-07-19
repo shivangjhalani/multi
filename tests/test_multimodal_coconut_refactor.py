@@ -20,10 +20,14 @@ def mock_base_model():
     # Mock config
     mock_config = MagicMock()
     mock_config.use_return_dict = True
+    
+    # Mock language model and its config
+    mock_language_model = MagicMock()
+    mock_language_model.config.hidden_size = 64
+    model.language_model = mock_language_model
+    
     type(model).config = PropertyMock(return_value=mock_config)
     
-    # Mock hidden size
-    type(model).hidden_size = PropertyMock(return_value=64)
     
     # Mock embeddings
     mock_embeddings = MagicMock()
@@ -48,8 +52,8 @@ def mock_base_model():
             hidden_states=[torch.randn(batch_size, seq_len, 64)]
         )
     
-    model.forward.side_effect = forward_mock
-    model.return_value = model.forward.side_effect
+    model.forward = forward_mock
+    model.return_value = model.forward
     
     return model
 

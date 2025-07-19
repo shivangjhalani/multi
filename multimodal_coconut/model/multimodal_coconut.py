@@ -278,11 +278,19 @@ class MultimodalCoconut(nn.Module):
             # Create attention mask for the padded segments
             segment_attention_mask = torch.zeros((batch_size, max_segment_len),
                                                  dtype=torch.long, device=input_ids.device)
+            segment_position_ids = None
+            if position_ids is not None:
+                segment_position_ids = torch.zeros((batch_size, max_segment_len),
+                                                   dtype=torch.long, device=input_ids.device)
 
             for b in range(batch_size):
+                start_pos = last_processed_pos[b] - segment_input_ids[b].size(0)
                 segment_len = segment_input_ids[b].size(0)
                 padded_segment_ids[b, :segment_len] = segment_input_ids[b]
-                segment_attention_mask[b, :segment_len] = 1
+                segment_attention_mask[b, :segment_len] = attention_mask[b, start_pos:last_processed_pos[b]] if attention_mask is not None else 1
+                if position_ids is not None:
+                    segment_position_ids[b, :segment_len] = position_ids[b, start_pos:last_processed_pos[b]]
+
 
             # Get embeddings for the current segments
             inputs_embeds = wte(padded_segment_ids)
@@ -301,8 +309,8 @@ class MultimodalCoconut(nn.Module):
                 pixel_values=pixel_values, # Pass visual info at each step
                 input_ids=None,
                 inputs_embeds=inputs_embeds,
-                attention_mask=attention_mask, # This needs to be correctly constructed for the segment
-                position_ids=position_ids, # This also needs to be correctly constructed
+                attention_mask=segment_attention_mask,
+                position_ids=segment_position_ids,
                 image_flags=image_flags,
                 past_key_values=current_past_key_values, # Use cache from previous segment
                 labels=None,
@@ -489,46 +497,21 @@ class MultimodalCoconut(nn.Module):
             generation_config = {}
         max_new_tokens = generation_config.get('max_new_tokens', 100)
         eos_token_id = generation_config.get('eos_token_id', self.eos_token_id)
-        
-        batch_size, seq_len = input_ids.shape
-        wte = self.base_model.get_input_embeddings()
-        
-        latent_indices = (input_ids == self.latent_token_id).nonzero(as_tuple=False)
-        latent_lists = [
-            sorted([idx[1].item() for idx in latent_indices if idx[0] == i])
-            for i in range(batch_size)
-        ]
 
-        # Process prompt and latent tokens sequentially
-        current_past_key_values = None
-        last_processed_pos = {b: 0 for b in range(batch_size)}
-        max_n_latents = max([len(l) for l in latent_lists]) if latent_lists else 0
+        batch_size = input_ids.shape[0]
 
-        for i in range(max_n_latents + 1):
-            # ... (Full sequential processing logic from _multimodal_forward_pass would go here)
-            # This is a simplified version for now. A full implementation would require
-            # careful handling of segments, padding, and attention masks.
-            
-            # For this refactor, we'll assume a simplified generation loop that
-            # at least passes the pixel_values at each step.
-            pass
-
-        # For now, let's use a simplified version of the old generate logic
-        # but ensure pixel_values are passed in the generation loop.
-        outputs = self.base_model(
-            pixel_values=pixel_values,
+        # Process the prompt iteratively, including latent tokens
+        prompt_outputs = self.forward(
             input_ids=input_ids,
+            pixel_values=pixel_values,
             attention_mask=attention_mask,
-            image_flags=image_flags,
-            past_key_values=None,
             use_cache=True,
-            output_hidden_states=True,
             return_dict=True,
-            num_patches_list=num_patches_list,
+            num_patches_list=num_patches_list
         )
-        past_key_values = outputs.past_key_values
-        
-        next_token_logits = outputs.logits[:, -1, :]
+
+        past_key_values = prompt_outputs.past_key_values
+        next_token_logits = prompt_outputs.logits[:, -1, :]
         next_token_ids = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)
         
         generated_ids = [ids.tolist() for ids in input_ids]
