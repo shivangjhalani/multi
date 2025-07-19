@@ -16,7 +16,6 @@ from PIL import Image
 def real_model_and_tokenizer():
     """Loads the real InternVL model and tokenizer."""
     config = create_config_from_template('debug')
-    # Use a smaller model for faster testing if available, otherwise use the default.
     config.model_id = "OpenGVLab/InternVL3-1B-Pretrained" # DO NOT CHANGE
     model, tokenizer = create_multimodal_coconut_model(config)
     return model, tokenizer
@@ -37,7 +36,8 @@ def test_model_initialization(real_model_and_tokenizer):
 def test_standard_forward_pass_no_latents(real_model_and_tokenizer, pixel_values):
     """Test the standard forward pass when no latent tokens are present."""
     model, tokenizer = real_model_and_tokenizer
-    input_ids = tokenizer("A dog is sitting on the grass", return_tensors='pt').input_ids
+    device = model.base_model.device
+    input_ids = tokenizer("A dog is sitting on the grass", return_tensors='pt').input_ids.to(device)
     
     outputs = model.forward(input_ids=input_ids, pixel_values=pixel_values)
     
@@ -48,9 +48,10 @@ def test_standard_forward_pass_no_latents(real_model_and_tokenizer, pixel_values
 def test_iterative_forward_pass_with_latents(real_model_and_tokenizer, pixel_values):
     """Test the iterative forward pass with latent tokens."""
     model, tokenizer = real_model_and_tokenizer
+    device = model.base_model.device
     latent_token = "<|latent|>"
     input_text = f"The dog {latent_token} is happy."
-    input_ids = tokenizer(input_text, return_tensors='pt').input_ids
+    input_ids = tokenizer(input_text, return_tensors='pt').input_ids.to(device)
 
     outputs = model.forward(input_ids=input_ids, pixel_values=pixel_values)
 
@@ -60,9 +61,10 @@ def test_iterative_forward_pass_with_latents(real_model_and_tokenizer, pixel_val
 def test_causal_kv_cache_usage(real_model_and_tokenizer, pixel_values):
     """Ensure past_key_values are passed and grown between iterative steps."""
     model, tokenizer = real_model_and_tokenizer
+    device = model.base_model.device
     latent_token = "<|latent|>"
     input_text = f"Q: What is the dog doing? A: The dog {latent_token} is running and {latent_token} playing."
-    input_ids = tokenizer(input_text, return_tensors='pt').input_ids
+    input_ids = tokenizer(input_text, return_tensors='pt').input_ids.to(device)
 
     # The test for this is implicitly handled by a successful forward pass.
     # A failure in KV-caching would likely lead to a tensor shape mismatch error.
@@ -75,9 +77,10 @@ def test_causal_kv_cache_usage(real_model_and_tokenizer, pixel_values):
 def test_dynamic_visual_processing(real_model_and_tokenizer, pixel_values):
     """Verify pixel_values are used in the iterative pass."""
     model, tokenizer = real_model_and_tokenizer
+    device = model.base_model.device
     latent_token = "<|latent|>"
     input_text = f"The color of the ball is {latent_token}."
-    input_ids = tokenizer(input_text, return_tensors='pt').input_ids
+    input_ids = tokenizer(input_text, return_tensors='pt').input_ids.to(device)
     
     # Run with and without pixel_values to ensure the model behaves differently.
     with torch.no_grad():
@@ -90,9 +93,10 @@ def test_dynamic_visual_processing(real_model_and_tokenizer, pixel_values):
 def test_generate_method_with_latents(real_model_and_tokenizer, pixel_values):
     """Test the generate method with latent tokens."""
     model, tokenizer = real_model_and_tokenizer
+    device = model.base_model.device
     latent_token = "<|latent|>"
     input_text = f"Q: What is in the image? A: I see {latent_token}."
-    input_ids = tokenizer(input_text, return_tensors='pt').input_ids
+    input_ids = tokenizer(input_text, return_tensors='pt').input_ids.to(device)
 
     generated_ids = model.generate(
         pixel_values=pixel_values,
