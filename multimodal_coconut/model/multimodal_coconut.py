@@ -237,6 +237,12 @@ class MultimodalCoconut(nn.Module):
 
         # Extract visual features once, as they are constant across segments
         vision_hidden_states = self.base_model.vision_model(pixel_values=pixel_values)[0] if pixel_values is not None else None
+        
+        # DEBUG: Log visual feature extraction
+        if vision_hidden_states is not None:
+            logger.info(f"DEBUG: Extracted vision_hidden_states with shape: {vision_hidden_states.shape}")
+        else:
+            logger.info("DEBUG: No pixel_values provided, vision_hidden_states is None")
 
         for i in range(max_n_latents + 1): # +1 for the final segment
             
@@ -367,6 +373,10 @@ class MultimodalCoconut(nn.Module):
             # Create image_flags for this iteration
             iter_image_flags = torch.ones(batch_size, 1, dtype=torch.long, device=inputs_embeds.device) if pixel_values is not None else None
             
+            # DEBUG: Log that we're calling language_model directly without visual features
+            logger.info(f"DEBUG: Calling language_model directly for segment {i}")
+            logger.info(f"DEBUG: vision_hidden_states available but NOT used: {vision_hidden_states is not None}")
+            
             # Forward pass using the base model directly with manual embedding injection
             # Since InternVLChatModel doesn't support inputs_embeds, we need to use its language_model directly
             outputs = self.base_model.language_model(
@@ -378,6 +388,7 @@ class MultimodalCoconut(nn.Module):
                 output_attentions=output_attentions,
                 output_hidden_states=True, # Needed for the next thought vector
                 return_dict=True,
+                vision_hidden_states=vision_hidden_states,  # Pass visual features
             )
             
             current_past_key_values = outputs.past_key_values
