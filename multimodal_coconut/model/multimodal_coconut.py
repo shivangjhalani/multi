@@ -117,6 +117,7 @@ class MultimodalCoconut(nn.Module):
                 output_hidden_states: Optional[bool] = None,
                 return_dict: Optional[bool] = None,
                 num_patches_list: Optional[List[int]] = None,
+                num_patches_list: Optional[List[int]] = None,
                 **kwargs) -> Union[Tuple, CausalLMOutputWithPast]:
         """
         Multimodal forward pass with continuous thought reasoning.
@@ -164,6 +165,7 @@ class MultimodalCoconut(nn.Module):
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
                 num_patches_list=num_patches_list,
+                num_patches_list=num_patches_list,
                 **kwargs
             )
         
@@ -181,6 +183,7 @@ class MultimodalCoconut(nn.Module):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            num_patches_list=num_patches_list,
             num_patches_list=num_patches_list,
             **kwargs
         )
@@ -370,6 +373,7 @@ class MultimodalCoconut(nn.Module):
                                    output_attentions: Optional[bool] = None,
                                    output_hidden_states: Optional[bool] = None,
                                    return_dict: Optional[bool] = None,
+                                   num_patches_list: Optional[List[int]] = None,
                                    num_patches_list: Optional[List[int]] = None,
                                    **kwargs) -> CausalLMOutputWithPast:
         """
