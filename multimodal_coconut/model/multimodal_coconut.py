@@ -338,7 +338,7 @@ class MultimodalCoconut(nn.Module):
                 use_cache=True,
                 output_hidden_states=True,
                 return_dict=True,
-                vision_hidden_states=vision_hidden_states # Persist visual context
+                vision_hidden_states=None # Persist visual context
             )
             
             all_logits.append(outputs.logits)
