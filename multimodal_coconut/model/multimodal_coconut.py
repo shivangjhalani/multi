@@ -222,59 +222,24 @@ class MultimodalCoconut(nn.Module):
         # This is the correct way to get visual embeddings from InternVL
         vit_embeds = self.base_model.extract_feature(pixel_values)
 
-        # Prepare for merging
-        new_input_embeds = []
-        new_attention_mask = []
+        # Project visual embeddings to a single vector
+        # This is a simplified approach to make the visual information compatible
+        # with the single-token latent placeholder.
+        # The mean of the visual embeddings is taken to create a single vector.
+        vit_embeds = vit_embeds.mean(dim=1)
         
-        batch_size = input_ids.shape[0]
-        for i in range(batch_size):
-            # Find the first latent token for this batch item
+        # Merge visual embeddings into the text embeddings at latent token positions
+        for i in range(input_ids.shape[0]):
+            # Find all latent tokens for this batch item
             latent_idx = (input_ids[i] == self.latent_token_id).nonzero(as_tuple=True)[0]
-            
-            if len(latent_idx) == 0:
-                # No latent token, just use text embeddings
-                new_input_embeds.append(input_embeds[i])
-                new_attention_mask.append(attention_mask[i])
-                continue
+            if len(latent_idx) > 0:
+                # Replace each latent token embedding with the averaged visual embedding
+                input_embeds[i, latent_idx] = vit_embeds[i]
 
-            # For simplicity, we only handle the first latent token per sample
-            # This aligns with the common use case of providing one image context
-            first_latent_pos = latent_idx[0]
-            
-            # Split text embeddings around the latent token
-            pre_latent_embeds = input_embeds[i, :first_latent_pos]
-            post_latent_embeds = input_embeds[i, first_latent_pos + 1:]
-            
-            # Combine: text (pre) + vision + text (post)
-            combined_embeds = torch.cat([
-                pre_latent_embeds,
-                vit_embeds[i],
-                post_latent_embeds
-            ], dim=0)
-            
-            # Create a new attention mask for the combined sequence
-            combined_attention_mask = torch.ones(combined_embeds.shape[0], dtype=torch.long, device=input_ids.device)
-            
-            new_input_embeds.append(combined_embeds)
-            new_attention_mask.append(combined_attention_mask)
-
-        # Pad the sequences to the same length
-        # This is a simplified padding implementation. A more robust solution
-        # would use a tokenizer's padding capabilities.
-        max_len = max(embed.shape[0] for embed in new_input_embeds)
-        
-        final_embeds = torch.zeros(batch_size, max_len, self.hidden_size, device=input_ids.device, dtype=input_embeds.dtype)
-        final_attention_mask = torch.zeros(batch_size, max_len, dtype=torch.long, device=input_ids.device)
-        
-        for i in range(batch_size):
-            seq_len = new_input_embeds[i].shape[0]
-            final_embeds[i, :seq_len] = new_input_embeds[i]
-            final_attention_mask[i, :seq_len] = new_attention_mask[i]
-            
         # 3. Pass the combined embeddings to the language model
         return self.base_model.language_model(
-            inputs_embeds=final_embeds,
-            attention_mask=final_attention_mask,
+            inputs_embeds=input_embeds,
+            attention_mask=attention_mask,
             position_ids=None, # Position IDs would need to be recalculated
             past_key_values=past_key_values,
             labels=None, # Labels would need to be recalculated to align with new sequence
