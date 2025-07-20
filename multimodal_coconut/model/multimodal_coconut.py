@@ -500,6 +500,7 @@ class MultimodalCoconut(nn.Module):
         dynamic multimodal fusion. It processes the input sequentially.
         """
         self.eval()
+        self.vision_features_added = False
 
         if generation_config is None:
             generation_config = {}
