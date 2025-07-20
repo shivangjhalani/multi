@@ -208,10 +208,15 @@ class MultimodalCoconut(nn.Module):
         batch_size, seq_len = input_ids.shape
         wte = self.base_model.get_input_embeddings()
         
-        # Extract visual features once. These will be available throughout the reasoning process.
-        vision_hidden_states = self.base_model.vision_model(pixel_values=pixel_values)[0] if pixel_values is not None else None
-        if vision_hidden_states is not None:
-            logger.debug(f"Extracted vision_hidden_states with shape: {vision_hidden_states.shape}")
+        # Correctly process visual features through the vision model and multimodal projector
+        # to ensure the embedding dimensions match the language model's expectations.
+        vision_features = None
+        if pixel_values is not None:
+            vision_outputs = self.base_model.vision_model(pixel_values, output_hidden_states=True)
+            vision_hidden_states = vision_outputs.hidden_states[self.base_model.select_layer]
+            image_embeds = self.base_model.mm_projector(vision_hidden_states)
+            vision_features = image_embeds
+            logger.debug(f"Processed vision features with shape: {vision_features.shape}")
 
         # Group latent tokens by batch and sort them
         latent_lists = [
@@ -236,13 +241,13 @@ class MultimodalCoconut(nn.Module):
 
         # Manually fuse visual features by prepending them to the text embeddings.
         # This is necessary because we are bypassing the base_model's fusion logic.
-        if vision_hidden_states is not None:
-            inputs_embeds = torch.cat([vision_hidden_states, inputs_embeds], dim=1)
+        if vision_features is not None:
+            inputs_embeds = torch.cat([vision_features, inputs_embeds], dim=1)
             
             # Adjust the attention mask to account for the added visual tokens
             if initial_attention_mask is not None:
                 vision_attention_mask = torch.ones(
-                    vision_hidden_states.shape[:2],
+                    vision_features.shape[:2],
                     dtype=initial_attention_mask.dtype,
                     device=initial_attention_mask.device
                 )
@@ -258,7 +263,7 @@ class MultimodalCoconut(nn.Module):
             use_cache=True,
             output_hidden_states=True,
             return_dict=True,
-            vision_hidden_states=None  # Pass None as it's now part of inputs_embeds
+            vision_hidden_states=None
         )
         
         all_logits.append(outputs.logits)
