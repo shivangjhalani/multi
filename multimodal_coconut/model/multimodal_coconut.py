@@ -262,7 +262,7 @@ class MultimodalCoconut(nn.Module):
             use_cache=True,
             output_hidden_states=True,
             return_dict=True,
-            vision_hidden_states=None
+            vision_hidden_states=vision_features
         )
         
         all_logits.append(outputs.logits)
@@ -383,14 +383,12 @@ class MultimodalCoconut(nn.Module):
                                    pixel_values: Optional[torch.FloatTensor] = None,
                                    attention_mask: Optional[torch.Tensor] = None,
                                    position_ids: Optional[torch.LongTensor] = None,
-                                   image_flags: Optional[torch.LongTensor] = None,
                                    past_key_values: Optional[List[torch.FloatTensor]] = None,
                                    labels: Optional[torch.LongTensor] = None,
                                    use_cache: Optional[bool] = None,
                                    output_attentions: Optional[bool] = None,
                                    output_hidden_states: Optional[bool] = None,
                                    return_dict: Optional[bool] = None,
-                                   num_patches_list: Optional[List[int]] = None,
                                    **kwargs) -> CausalLMOutputWithPast:
         """
         Standard forward pass for multimodal inputs without latent tokens.
@@ -451,37 +449,18 @@ class MultimodalCoconut(nn.Module):
         
         # For multimodal inputs, use the full InternVL3 model
         # Filter out parameters that InternVL3 doesn't expect
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ['_num_patches_list']}
-        
-        # Ensure image_flags is properly set for InternVL3
-        if image_flags is None and pixel_values is not None:
-            # Create default image_flags if not provided
-            batch_size = input_ids.shape[0]
-            image_flags = torch.ones(batch_size, 1, dtype=torch.long, device=input_ids.device)
-        
-        # # Ensure image_flags is a tensor if it's not None
-        # if image_flags is not None and not isinstance(image_flags, torch.Tensor):
-        #     image_flags = torch.tensor(image_flags, dtype=torch.long, device=input_ids.device)
-        
-        # The img_context_token_id is expected to be set during model initialization.
-        # This check is a safeguard. See `create_multimodal_coconut_model`.
-        if not hasattr(self.base_model, 'img_context_token_id'):
-            warnings.warn("`base_model.img_context_token_id` is not set. This may cause issues with multimodal inputs.")
-            self.base_model.img_context_token_id = None
-        
         return self.base_model(
             pixel_values=pixel_values,
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            image_flags=image_flags,
             past_key_values=past_key_values,
             labels=labels,
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
-            **filtered_kwargs
+            **kwargs
         )
     
     @torch.no_grad()
