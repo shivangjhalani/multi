@@ -218,9 +218,13 @@ class MultimodalCoconut(nn.Module):
         # 1. Get text embeddings
         input_embeds = self.base_model.language_model.get_input_embeddings()(input_ids)
         
-        # 2. Get visual embeddings from the ViT
-        vit_embeds, _ = self.base_model.encode_img(pixel_values) # Shape: [bs, num_img_tokens, hidden_size]
-        
+        # 2. Get visual embeddings by calling the model's forward pass
+        # Pass only pixel_values to get the vision output
+        outputs = self.base_model(pixel_values=pixel_values) 
+
+        # The embeddings are in the 'image_embeds' attribute of the output object
+        vit_embeds = outputs.image_embeds  # Shape: [bs, num_img_tokens, hidden_size]        
+
         # Prepare for merging
         new_input_embeds = []
         new_attention_mask = []
