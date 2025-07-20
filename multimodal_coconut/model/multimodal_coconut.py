@@ -218,24 +218,9 @@ class MultimodalCoconut(nn.Module):
         # 1. Get text embeddings
         input_embeds = self.base_model.language_model.get_input_embeddings()(input_ids)
         
-        # 2. Get visual embeddings by calling the model's forward pass
-        # InternVL requires a non-empty `input_ids` to produce `image_embeds`.
-        # We pass the original `input_ids` to ensure the vision part of the model runs.
-        # We set `labels` to None to prevent loss calculation at this stage.
-        # Ensure image_flags is properly set for InternVL3, which is not nullable
-        if image_flags is None:
-            batch_size = input_ids.shape[0]
-            image_flags = torch.ones(batch_size, 1, dtype=torch.long, device=input_ids.device)
-
-        vision_outputs = self.base_model(
-            input_ids=input_ids,
-            pixel_values=pixel_values,
-            attention_mask=attention_mask,
-            image_flags=image_flags,
-            labels=None, # Ensure no loss is calculated here
-            position_ids=None
-        )
-        vit_embeds = vision_outputs.image_embeds  # Shape: [bs, num_img_tokens, hidden_size]
+        # 2. Get visual embeddings using the correct `extract_feature` method
+        # This is the correct way to get visual embeddings from InternVL
+        vit_embeds = self.base_model.extract_feature(pixel_values)
 
         # Prepare for merging
         new_input_embeds = []
