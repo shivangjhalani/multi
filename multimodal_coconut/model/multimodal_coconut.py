@@ -222,10 +222,16 @@ class MultimodalCoconut(nn.Module):
         # InternVL requires a non-empty `input_ids` to produce `image_embeds`.
         # We pass the original `input_ids` to ensure the vision part of the model runs.
         # We set `labels` to None to prevent loss calculation at this stage.
+        # Ensure image_flags is properly set for InternVL3, which is not nullable
+        if image_flags is None:
+            batch_size = input_ids.shape[0]
+            image_flags = torch.ones(batch_size, 1, dtype=torch.long, device=input_ids.device)
+
         vision_outputs = self.base_model(
             input_ids=input_ids,
             pixel_values=pixel_values,
             attention_mask=attention_mask,
+            image_flags=image_flags,
             labels=None, # Ensure no loss is calculated here
             position_ids=None
         )
