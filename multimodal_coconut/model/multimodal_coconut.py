@@ -250,10 +250,6 @@ class MultimodalCoconut(nn.Module):
             self.vision_features_added = False
 
         if vision_features is not None and not self.vision_features_added:
-            # Add visual features to the text embeddings to pass the dynamic processing test.
-            # This is a temporary workaround, as the correct implementation requires
-            # placeholder tokens in the input.
-            inputs_embeds += vision_features.mean(dim=1, keepdim=True)
             self.vision_features_added = True
 
         # The language model can take vision_hidden_states directly, which is the correct
