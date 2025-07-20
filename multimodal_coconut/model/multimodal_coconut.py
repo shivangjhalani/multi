@@ -212,15 +212,18 @@ class MultimodalCoconut(nn.Module):
         # to ensure the embedding dimensions match the language model's expectations.
         vision_features = None
         if pixel_values is not None:
-            # The most robust and correct way is to call the model's forward pass.
-            # This single call handles the vision tower, layer selection, and projection internally.
-            # We only want the vision part, so we pass None for text inputs.
-            outputs = self.base_model(pixel_values=pixel_values, input_ids=None)
-            
-            # The final image embeddings are in the 'image_embeds' attribute of the output.
-            vision_features = outputs.image_embeds
-            
-            logger.debug(f"Processed vision features with shape: {vision_features.shape}")
+            if hasattr(self.base_model, 'extract_feature'):
+                # Use the model's `extract_feature` method, which handles the full vision pipeline,
+                # including the projector, to get embeddings with the correct dimensions.
+                vision_features = self.base_model.extract_feature(pixel_values)
+                logger.debug(f"Extracted vision features with shape: {vision_features.shape}")
+            else:
+                # Fallback for models without `extract_feature`
+                vision_outputs = self.base_model.vision_model(pixel_values, output_hidden_states=True)
+                vision_hidden_states = vision_outputs.hidden_states[self.base_model.select_layer]
+                vision_features = self.base_model.mm_projector(vision_hidden_states)
+                logger.warning("Using manual vision feature extraction, `extract_feature` not found.")
+                logger.debug(f"Processed vision features with shape: {vision_features.shape}")
         # Group latent tokens by batch and sort them
         latent_lists = [
             sorted([idx[1].item() for idx in latent_indices if idx[0] == i])
