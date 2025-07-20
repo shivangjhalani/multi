@@ -149,14 +149,8 @@ class MultimodalCoconut(nn.Module):
         latent_indices = (input_ids == self.latent_token_id).nonzero(as_tuple=False)
         
         # DEBUG: Log whether latent tokens are found
-        logger.info(f"DEBUG: Found {len(latent_indices)} latent token positions")
-        logger.info(f"DEBUG: Latent token ID: {self.latent_token_id}")
-        logger.info(f"DEBUG: Input IDs shape: {input_ids.shape}")
-        logger.info(f"DEBUG: Input IDs: {input_ids}")
-        
         if len(latent_indices) == 0:
             # No latent tokens - use standard multimodal forward pass
-            logger.info("DEBUG: Using standard multimodal forward pass (no latent tokens)")
             return self._standard_multimodal_forward(
                 input_ids=input_ids,
                 pixel_values=pixel_values,
@@ -174,7 +168,6 @@ class MultimodalCoconut(nn.Module):
             )
         
         # Multimodal CoCoNuT forward pass with iterative processing
-        logger.info("DEBUG: Using iterative multimodal forward pass (latent tokens found)")
         return self._multimodal_forward_pass(
             input_ids=input_ids,
             latent_indices=latent_indices,
@@ -209,25 +202,17 @@ class MultimodalCoconut(nn.Module):
                                  **kwargs) -> CausalLMOutputWithPast:
         """
         Iterative, sequentially dependent multimodal forward pass.
-
-        This implementation processes the input sequence segment by segment, respecting
-        the causal chain of reasoning. It enables dynamic multimodal reasoning by
-        making visual information available at each step.
-
-        The process is as follows:
-        1.  The input sequence is split into segments based on the positions of
-            `<|latent|>` tokens.
-        2.  The model iterates through these segments, processing one at a time.
-        3.  In each iteration, it passes the current segment's tokens, the
-            `pixel_values`, and the `past_key_values` from the previous step to
-            the base model.
-        4.  When a latent token is processed, the hidden state from the previous
-            token is used as the "thought vector" for the next segment.
-        5.  The final logits are assembled from the outputs of each segment.
+        This refactored method ensures causality, preserves visual context, and correctly
+        manages the KV cache.
         """
         batch_size, seq_len = input_ids.shape
         wte = self.base_model.get_input_embeddings()
         
+        # Extract visual features once. These will be available throughout the reasoning process.
+        vision_hidden_states = self.base_model.vision_model(pixel_values=pixel_values)[0] if pixel_values is not None else None
+        if vision_hidden_states is not None:
+            logger.debug(f"Extracted vision_hidden_states with shape: {vision_hidden_states.shape}")
+
         # Group latent tokens by batch and sort them
         latent_lists = [
             sorted([idx[1].item() for idx in latent_indices if idx[0] == i])
@@ -237,228 +222,111 @@ class MultimodalCoconut(nn.Module):
         # Initialize containers for outputs
         all_logits = []
         current_past_key_values = past_key_values
+        last_processed_pos = 0
         
-        # Process the sequence segment by segment
-        last_processed_pos = {b: 0 for b in range(batch_size)}
+        # Process the sequence up to the first latent token
+        first_latent_pos = min([l[0] for l in latent_lists if l]) if any(latent_lists) else seq_len
         
-        # Determine the number of latent segments to process
+        # Initial segment processing
+        initial_segment_ids = input_ids[:, :first_latent_pos]
+        initial_attention_mask = attention_mask[:, :first_latent_pos] if attention_mask is not None else None
+        initial_position_ids = position_ids[:, :first_latent_pos] if position_ids is not None else None
+        
+        inputs_embeds = wte(initial_segment_ids)
+
+        # The language model can take vision_hidden_states directly, which is the correct
+        # way to provide visual context in InternVL.
+        outputs = self.base_model.language_model(
+            inputs_embeds=inputs_embeds,
+            attention_mask=initial_attention_mask,
+            position_ids=initial_position_ids,
+            past_key_values=current_past_key_values,
+            use_cache=True,
+            output_hidden_states=True,
+            return_dict=True,
+            vision_hidden_states=vision_hidden_states
+        )
+        
+        all_logits.append(outputs.logits)
+        current_past_key_values = outputs.past_key_values
+        last_hidden_states = outputs.hidden_states[-1]
+        last_processed_pos = first_latent_pos
+
+        # Iteratively process latent segments
         max_n_latents = max([len(l) for l in latent_lists]) if latent_lists else 0
-
-        # Extract visual features once, as they are constant across segments
-        # Use InternVL's extract_feature method to get properly processed visual embeddings
-        vit_embeds = self.base_model.extract_feature(pixel_values) if pixel_values is not None else None
-        
-        # Log visual feature extraction for debugging
-        if vit_embeds is not None:
-            logger.debug(f"Extracted vit_embeds with shape: {vit_embeds.shape}")
-        else:
-            logger.debug("No pixel_values provided, vit_embeds is None")
+        for i in range(max_n_latents):
             
-        # CRITICAL: The CoCoNuT model expects visual features to affect latent processing
-        # This implements a two-pronged approach for visual integration:
-        # 1. Standard IMG_CONTEXT token replacement (for InternVL compatibility)
-        # 2. Visual context injection for latent reasoning (for CoCoNuT multimodal reasoning)
-        if vit_embeds is not None and len(latent_indices) > 0:
-            logger.debug("Will inject visual features to influence latent token processing")
-
-        for i in range(max_n_latents + 1): # +1 for the final segment
-            
-            # Prepare a batch of segments for the current iteration
-            segment_input_ids = []
-            segment_attention_mask = []
-            segment_position_ids = []
-            max_segment_len = 0
-            
-            # This will hold the thought vector from the previous step if applicable
-            thought_vectors = {}
-
-            if i > 0:
-                # We are in a latent step, get the thought vectors
-                last_hidden_states = outputs.hidden_states[-1]
-                for b in range(batch_size):
-                    if i <= len(latent_lists[b]):
-                        thought_pos = latent_lists[b][i-1] - 1
-                        if thought_pos >= last_processed_pos[b]:
-                            # The position relative to the last segment's output
-                            relative_pos = thought_pos - last_processed_pos[b]
-                            if relative_pos < last_hidden_states.shape[1]:
-                                thought_vectors[b] = last_hidden_states[b, relative_pos, :]
-
-            # Check if all segments would be empty - if so, break early
-            all_empty = True
+            # Prepare thought vectors from the previous step's hidden states
+            thought_vectors = []
             for b in range(batch_size):
-                start_pos = last_processed_pos[b]
-                end_pos = latent_lists[b][i] if i < len(latent_lists[b]) else seq_len
-                if start_pos < end_pos:
-                    all_empty = False
-                    break
+                if i < len(latent_lists[b]):
+                    # The thought vector is the hidden state of the token *before* the latent token
+                    thought_pos = latent_lists[b][i] - 1
+                    # The hidden states from the previous pass correspond to a specific segment.
+                    # We calculate the start of that segment to find the relative position of the thought.
+                    prev_segment_len = last_hidden_states.shape[1]
+                    prev_segment_start_pos = last_processed_pos - prev_segment_len
+                    relative_pos = thought_pos - prev_segment_start_pos
+
+                    if 0 <= relative_pos < prev_segment_len:
+                        thought_vectors.append(last_hidden_states[b, relative_pos, :])
+                    else:
+                        # This indicates a potential issue with input or logic, but we safeguard here.
+                        warnings.warn(f"Calculated relative_pos {relative_pos} is out of bounds for segment of length {prev_segment_len}.")
+                        thought_vectors.append(torch.zeros(self.hidden_size, device=input_ids.device, dtype=wte.weight.dtype))
+                else:
+                    # If a batch item has no more latent tokens, use a zero vector
+                    thought_vectors.append(torch.zeros(self.hidden_size, device=input_ids.device, dtype=wte.weight.dtype))
             
-            if all_empty:
+            thought_embeds = torch.stack(thought_vectors, dim=0).unsqueeze(1)
+
+            # Determine the next segment to process
+            start_pos = last_processed_pos
+            end_pos = seq_len
+            for b in range(batch_size):
+                if i + 1 < len(latent_lists[b]):
+                    end_pos = min(end_pos, latent_lists[b][i+1])
+
+            segment_ids = input_ids[:, start_pos:end_pos]
+            segment_attention_mask = attention_mask[:, start_pos:end_pos] if attention_mask is not None else None
+            segment_position_ids = position_ids[:, start_pos:end_pos] if position_ids is not None else None
+            
+            if segment_ids.shape[1] == 0:
                 break
 
-            for b in range(batch_size):
-                start_pos = last_processed_pos[b]
-                # End position is the next latent token or the end of the sequence
-                end_pos = latent_lists[b][i] if i < len(latent_lists[b]) else seq_len
+            segment_embeds = wte(segment_ids)
+            
+            # The first token of the segment is the latent token.
+            # We replace its embedding with the continuous thought vector.
+            segment_embeds[:, 0, :] = thought_embeds.squeeze(1)
+            inputs_embeds = segment_embeds
 
-                # Get the current segment
-                current_segment_ids = input_ids[b, start_pos:end_pos]
-                
-                # Skip empty segments
-                if current_segment_ids.size(0) == 0:
-                    current_segment_ids = torch.tensor([self.eos_token_id], dtype=torch.long, device=input_ids.device)
-                
-                segment_input_ids.append(current_segment_ids)
-                
-                # Update the max length for padding
-                if current_segment_ids.size(0) > max_segment_len:
-                    max_segment_len = current_segment_ids.size(0)
+            # The attention mask and position IDs do not need to be modified
+            # because we are replacing an embedding, keeping the sequence length the same.
 
-                last_processed_pos[b] = end_pos
-            
-            # Ensure minimum sequence length to avoid empty tensors
-            max_segment_len = max(max_segment_len, 1)
-            
-            # Pad the segments to the same length for batch processing
-            padded_segment_ids = torch.full((batch_size, max_segment_len), self.eos_token_id,
-                                            dtype=torch.long, device=input_ids.device)
-            # Create attention mask for the padded segments
-            segment_attention_mask = torch.zeros((batch_size, max_segment_len),
-                                                 dtype=torch.long, device=input_ids.device)
-            segment_position_ids = None
-            if position_ids is not None:
-                segment_position_ids = torch.zeros((batch_size, max_segment_len),
-                                                   dtype=torch.long, device=input_ids.device)
-
-            for b in range(batch_size):
-                start_pos = last_processed_pos[b] - segment_input_ids[b].size(0)
-                segment_len = segment_input_ids[b].size(0)
-                padded_segment_ids[b, :segment_len] = segment_input_ids[b]
-                segment_attention_mask[b, :segment_len] = attention_mask[b, start_pos:last_processed_pos[b]] if attention_mask is not None else 1
-                if position_ids is not None:
-                    segment_position_ids[b, :segment_len] = position_ids[b, start_pos:last_processed_pos[b]]
-
-
-            # Get embeddings for the current segments
-            inputs_embeds = wte(padded_segment_ids)
-            
-            # CRITICAL FIX: Two-pronged approach for visual integration
-            # 1. Standard IMG_CONTEXT token replacement (for InternVL compatibility)
-            # 2. Visual context injection for latent reasoning (new for CoCoNuT)
-            
-            if vit_embeds is not None:
-                # Approach 1: Standard IMG_CONTEXT token replacement
-                if hasattr(self.base_model, 'img_context_token_id') and self.base_model.img_context_token_id is not None:
-                    logger.debug(f"Processing image context tokens with ID: {self.base_model.img_context_token_id}")
-                    
-                    # Flatten for processing (following InternVL pattern)
-                    batch_size, seq_len, hidden_size = inputs_embeds.shape
-                    inputs_embeds_flat = inputs_embeds.reshape(batch_size * seq_len, hidden_size)
-                    padded_segment_ids_flat = padded_segment_ids.reshape(batch_size * seq_len)
-                    
-                    # Find image context token positions
-                    selected = (padded_segment_ids_flat == self.base_model.img_context_token_id)
-                    
-                    if selected.sum() > 0:
-                        logger.debug(f"Found {selected.sum()} image context tokens to replace")
-                        # Replace image context token embeddings with visual features
-                        vit_embeds_flat = vit_embeds.reshape(-1, hidden_size)
-                        n_tokens = selected.sum()
-                        inputs_embeds_flat[selected] = inputs_embeds_flat[selected] * 0.0 + vit_embeds_flat[:n_tokens]
-                    
-                    # Reshape back
-                    inputs_embeds = inputs_embeds_flat.reshape(batch_size, seq_len, hidden_size)
-                
-                # Approach 2: Visual context injection for latent reasoning (NEW)
-                # This is key for multimodal CoCoNuT - inject visual context at the start of each segment
-                # when processing latent tokens, so visual information affects the reasoning process
-                if len(latent_indices) > 0 and i == 0:  # Only on first iteration
-                    logger.debug("Injecting visual context for latent reasoning")
-                    batch_size, seq_len, hidden_size = inputs_embeds.shape
-                    
-                    # Create visual context vector by averaging visual embeddings
-                    visual_context = vit_embeds.mean(dim=1)  # [batch_size, hidden_size]
-                    
-                    # Inject visual context into the first token of each segment
-                    # This provides visual grounding for the subsequent latent reasoning
-                    for b in range(batch_size):
-                        if seq_len > 0:
-                            # Blend visual context with text embedding (50-50 mix)
-                            inputs_embeds[b, 0] = 0.5 * inputs_embeds[b, 0] + 0.5 * visual_context[b]
-            
-            # Inject thought vectors from the previous step
-            # We need to handle this carefully to maintain proper tensor dimensions
-            if thought_vectors:
-                # Create a new inputs_embeds tensor with space for thought vectors
-                batch_size, seq_len, hidden_size = inputs_embeds.shape
-                new_inputs_embeds = []
-                new_attention_masks = []
-                
-                for b in range(batch_size):
-                    if b in thought_vectors:
-                        # Prepend the thought vector to this batch item
-                        thought_vec = thought_vectors[b].unsqueeze(0)  # [1, hidden_size]
-                        batch_embeds = torch.cat([thought_vec, inputs_embeds[b]], dim=0)  # [seq_len + 1, hidden_size]
-                        # Truncate to keep original sequence length
-                        batch_embeds = batch_embeds[:seq_len]
-                        
-                        # Adjust attention mask - add 1 for thought vector, truncate to original length
-                        thought_mask = torch.ones(1, dtype=torch.long, device=input_ids.device)
-                        batch_mask = torch.cat([thought_mask, segment_attention_mask[b]], dim=0)
-                        batch_mask = batch_mask[:seq_len]  # Keep original length
-                    else:
-                        batch_embeds = inputs_embeds[b]
-                        batch_mask = segment_attention_mask[b]
-                    
-                    new_inputs_embeds.append(batch_embeds)
-                    new_attention_masks.append(batch_mask)
-                
-                inputs_embeds = torch.stack(new_inputs_embeds, dim=0)
-                segment_attention_mask = torch.stack(new_attention_masks, dim=0)
-
-
-            # Create image_flags if pixel_values are present
-            iter_image_flags = None
-            if pixel_values is not None:
-                iter_image_flags = torch.ones(batch_size, 1, dtype=torch.long, device=input_ids.device)
-
-            # Convert inputs_embeds to input_ids for InternVLChatModel compatibility
-            # The InternVLChatModel expects input_ids, not inputs_embeds directly
-            # We need to work around this by using the base model's language_model directly
-            # since InternVLChatModel doesn't accept inputs_embeds in its forward method
-            
-            # Create dummy input_ids with the same shape as inputs_embeds for the batch
-            batch_size, seq_len, _ = inputs_embeds.shape
-            dummy_input_ids = torch.zeros((batch_size, seq_len), dtype=torch.long, device=inputs_embeds.device)
-            
-            # Create image_flags for this iteration
-            iter_image_flags = torch.ones(batch_size, 1, dtype=torch.long, device=inputs_embeds.device) if pixel_values is not None else None
-            
-            # Log language model call for this segment
-            logger.debug(f"Calling language_model for segment {i}")
-            logger.debug(f"Visual embeddings processed and injected: {vit_embeds is not None}")
-            
-            # Forward pass using the base model's language model with processed embeddings
-            # Visual features are now properly injected into inputs_embeds above
+            # Forward pass for the current segment
             outputs = self.base_model.language_model(
                 inputs_embeds=inputs_embeds,
                 attention_mask=segment_attention_mask,
                 position_ids=segment_position_ids,
-                past_key_values=current_past_key_values, # Use cache from previous segment
+                past_key_values=current_past_key_values,
                 use_cache=True,
-                output_attentions=output_attentions,
-                output_hidden_states=True, # Needed for the next thought vector
+                output_hidden_states=True,
                 return_dict=True,
+                vision_hidden_states=vision_hidden_states # Persist visual context
             )
             
-            current_past_key_values = outputs.past_key_values
             all_logits.append(outputs.logits)
+            current_past_key_values = outputs.past_key_values
+            last_hidden_states = outputs.hidden_states[-1]
+            last_processed_pos = end_pos
 
         # Concatenate logits from all segments
         final_logits = torch.cat(all_logits, dim=1)
 
         loss = None
         if labels is not None:
+            # Ensure logits and labels align correctly for loss calculation
             shift_logits = final_logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
             loss_fct = nn.CrossEntropyLoss()
@@ -577,17 +445,11 @@ class MultimodalCoconut(nn.Module):
         # if image_flags is not None and not isinstance(image_flags, torch.Tensor):
         #     image_flags = torch.tensor(image_flags, dtype=torch.long, device=input_ids.device)
         
-        # CRITICAL: Set img_context_token_id if not already set
-        if not hasattr(self.base_model, 'img_context_token_id') or self.base_model.img_context_token_id is None:
-            # Try to get IMG_CONTEXT token ID from the input_ids
-            # This is a fallback - ideally this should be set during model initialization
-            try:
-                # Look for IMG_CONTEXT token in the vocabulary
-                # We'll use a common token ID that should exist
-                # This is a temporary fix - the proper solution is to ensure tokenizer has IMG_CONTEXT
-                self.base_model.img_context_token_id = 151667  # This should be the IMG_CONTEXT token ID for InternVL3
-            except:
-                self.base_model.img_context_token_id = None
+        # The img_context_token_id is expected to be set during model initialization.
+        # This check is a safeguard. See `create_multimodal_coconut_model`.
+        if not hasattr(self.base_model, 'img_context_token_id'):
+            warnings.warn("`base_model.img_context_token_id` is not set. This may cause issues with multimodal inputs.")
+            self.base_model.img_context_token_id = None
         
         return self.base_model(
             pixel_values=pixel_values,
@@ -644,16 +506,20 @@ class MultimodalCoconut(nn.Module):
         
         generated_ids = [ids.tolist() for ids in input_ids]
 
-        vision_hidden_states = self.base_model.vision_model(pixel_values=pixel_values)[0] if pixel_values is not None else None
-        
         for _ in range(max_new_tokens):
-            outputs = self.base_model.language_model.forward(
+            # When using past_key_values, we only need to provide the input_ids for the next token.
+            # The attention_mask for this single token is simply 1.
+            next_attention_mask = torch.ones_like(next_token_ids)
+
+            outputs = self.forward(
                 input_ids=next_token_ids,
+                attention_mask=next_attention_mask,
                 past_key_values=past_key_values,
                 use_cache=True,
                 return_dict=True,
-                vision_hidden_states=vision_hidden_states,
+                pixel_values=None,  # Visual features are already in the cache
             )
+            
             past_key_values = outputs.past_key_values
             next_token_logits = outputs.logits[:, -1, :]
             next_token_ids = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)
@@ -764,6 +630,9 @@ class MultimodalCoconut(nn.Module):
         
         input_ids = model_inputs['input_ids'].to(device)
         attention_mask = model_inputs['attention_mask'].to(device)
+        
+        if pixel_values is not None:
+            pixel_values = pixel_values.to(device)
         
         # Set up generation config
         if generation_config is None:
