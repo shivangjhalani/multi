@@ -247,7 +247,8 @@ class MultimodalCoconut(nn.Module):
 
         # Manually fuse visual features by prepending them to the text embeddings.
         # This is necessary because we are bypassing the base_model's fusion logic.
-        if vision_features is not None:
+        vision_features_added = False
+        if vision_features is not None and not vision_features_added:
             inputs_embeds = torch.cat([vision_features, inputs_embeds], dim=1)
             
             # Adjust the attention mask to account for the added visual tokens
@@ -258,6 +259,7 @@ class MultimodalCoconut(nn.Module):
                     device=initial_attention_mask.device
                 )
                 initial_attention_mask = torch.cat([vision_attention_mask, initial_attention_mask], dim=1)
+            vision_features_added = True
 
         # The language model can take vision_hidden_states directly, which is the correct
         # way to provide visual context in InternVL.
