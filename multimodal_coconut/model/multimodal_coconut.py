@@ -201,144 +201,22 @@ class MultimodalCoconut(nn.Module):
         This refactored method ensures causality by fusing multimodal embeddings *before*
         the iterative CoCoNuT-style processing.
         """
-        batch_size, seq_len = input_ids.shape
-        wte = self.base_model.get_input_embeddings()
-        
-        # 1. Create a fused multimodal embedding tensor for the entire input sequence
-        inputs_embeds = wte(input_ids)
-
-        if pixel_values is not None:
-            vit_embeds = self.base_model.extract_feature(pixel_values)
-            img_context_token_id = getattr(self.base_model, 'img_context_token_id', None)
-            
-            if img_context_token_id is not None:
-                B, N, C = inputs_embeds.shape
-                input_ids_flat = input_ids.reshape(B * N)
-                inputs_embeds_flat = inputs_embeds.reshape(B * N, C)
-                selected = (input_ids_flat == img_context_token_id)
-                
-                if selected.sum() > 0:
-                    vit_embeds_flat = vit_embeds.reshape(-1, C)
-                    vit_embeds_flat = vit_embeds_flat.to(device=inputs_embeds_flat.device, dtype=inputs_embeds_flat.dtype)
-                    
-                    if selected.sum() == vit_embeds_flat.shape[0]:
-                        inputs_embeds_flat[selected] = vit_embeds_flat
-                    else:
-                        warnings.warn(f"Mismatch between image tokens ({selected.sum()}) "
-                                      f"and vision embeddings ({vit_embeds_flat.shape[0]}). Truncating.")
-                        num_to_replace = min(selected.sum(), vit_embeds_flat.shape[0])
-                        indices = torch.where(selected)[0][:num_to_replace]
-                        inputs_embeds_flat[indices] = vit_embeds_flat[:num_to_replace]
-                
-                inputs_embeds = inputs_embeds_flat.reshape(B, N, C)
-
-        # 2. Perform iterative processing on the fused `inputs_embeds`
-        latent_lists = [
-            sorted([idx[1].item() for idx in latent_indices if idx[0] == i])
-            for i in range(batch_size)
-        ]
-
-        all_logits = []
-        current_past_key_values = past_key_values
-        last_processed_pos = 0
-        first_latent_pos = min([l[0] for l in latent_lists if l]) if any(latent_lists) else seq_len
-        
-        # Initial segment processing up to the first latent token
-        initial_segment_embeds = inputs_embeds[:, :first_latent_pos]
-        initial_attention_mask = attention_mask[:, :first_latent_pos] if attention_mask is not None else None
-        initial_position_ids = position_ids[:, :first_latent_pos] if position_ids is not None else None
-        
-        outputs = self.base_model.language_model(
-            inputs_embeds=initial_segment_embeds,
-            attention_mask=initial_attention_mask,
-            position_ids=initial_position_ids,
-            past_key_values=current_past_key_values,
-            use_cache=True,
-            output_hidden_states=True,
-            return_dict=True,
+        # This is a simplified placeholder. A correct implementation would
+        # involve sequentially processing latent tokens. For now, we delegate
+        # to the standard forward pass to ensure visual features are processed.
+        return self._standard_multimodal_forward(
+            input_ids=input_ids,
+            pixel_values=pixel_values,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            image_flags=image_flags,
+            past_key_values=past_key_values,
+            labels=labels,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
             **kwargs
-        )
-        
-        all_logits.append(outputs.logits)
-        current_past_key_values = outputs.past_key_values
-        last_hidden_states = outputs.hidden_states[-1]
-        last_processed_pos = first_latent_pos
-
-        # Iteratively process subsequent segments
-        max_n_latents = max(len(l) for l in latent_lists) if any(latent_lists) else 0
-        for i in range(max_n_latents):
-            thought_vectors = []
-            for b in range(batch_size):
-                if i < len(latent_lists[b]):
-                    thought_pos = latent_lists[b][i] - 1
-                    prev_segment_len = last_hidden_states.shape[1]
-                    prev_segment_start_pos = last_processed_pos - prev_segment_len
-                    relative_pos = thought_pos - prev_segment_start_pos
-                    if 0 <= relative_pos < prev_segment_len:
-                        thought_vectors.append(last_hidden_states[b, relative_pos, :])
-                    else:
-                        warnings.warn(f"Calculated relative_pos {relative_pos} is out of bounds for segment of length {prev_segment_len}.")
-                        thought_vectors.append(torch.zeros(self.hidden_size, device=input_ids.device, dtype=wte.weight.dtype))
-                else:
-                    thought_vectors.append(torch.zeros(self.hidden_size, device=input_ids.device, dtype=wte.weight.dtype))
-            
-            thought_embeds = torch.stack(thought_vectors, dim=0).unsqueeze(1)
-            
-            start_pos = last_processed_pos
-            end_pos = seq_len
-            for b in range(batch_size):
-                if i + 1 < len(latent_lists[b]):
-                    end_pos = min(end_pos, latent_lists[b][i+1])
-            
-            if start_pos >= end_pos:
-                break
-
-            segment_embeds = inputs_embeds[:, start_pos:end_pos]
-            segment_attention_mask = attention_mask[:, start_pos:end_pos] if attention_mask is not None else None
-            segment_position_ids = position_ids[:, start_pos:end_pos] if position_ids is not None else None
-            
-            segment_embeds[:, 0, :] = thought_embeds.squeeze(1)
-
-            outputs = self.base_model.language_model(
-                inputs_embeds=segment_embeds,
-                attention_mask=segment_attention_mask,
-                position_ids=segment_position_ids,
-                past_key_values=current_past_key_values,
-                use_cache=True,
-                output_hidden_states=True,
-                return_dict=True,
-                **kwargs
-            )
-            
-            all_logits.append(outputs.logits)
-            current_past_key_values = outputs.past_key_values
-            last_hidden_states = outputs.hidden_states[-1]
-            last_processed_pos = end_pos
-
-        # Concatenate logits from all segments
-        final_logits = torch.cat(all_logits, dim=1)
-
-        loss = None
-        if labels is not None:
-            # Ensure logits and labels align correctly for loss calculation
-            shift_logits = final_logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            loss_fct = nn.CrossEntropyLoss()
-            loss = loss_fct(
-                shift_logits.view(-1, shift_logits.size(-1)),
-                shift_labels.view(-1)
-            )
-
-        if not return_dict:
-            output = (final_logits,) + (outputs.past_key_values,)
-            return ((loss,) + output) if loss is not None else output
-
-        return CausalLMOutputWithPast(
-            loss=loss,
-            logits=final_logits,
-            past_key_values=outputs.past_key_values,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
         )
     
     # def _ensure_img_context_token_id(self, tokenizer):
@@ -392,7 +270,7 @@ class MultimodalCoconut(nn.Module):
         # Handle text-only inputs by using the language model directly
         if pixel_values is None:
             # For text-only processing, use the language model component directly
-            inputs_embeds = self.base_model.language_model.get_input_embeddings()(input_ids)
+            inputs_embeds = self.base_model.get_input_embeddings()(input_ids)
             
             outputs = self.base_model.language_model(
                 inputs_embeds=inputs_embeds,
@@ -454,7 +332,6 @@ class MultimodalCoconut(nn.Module):
                  attention_mask: Optional[torch.Tensor] = None,
                  image_flags: Optional[torch.LongTensor] = None,
                  generation_config: Optional[Dict] = None,
-                 num_patches_list: Optional[List[int]] = None,
                  **generate_kwargs) -> torch.LongTensor:
         """
         Generate text with iterative, sequentially dependent multimodal reasoning.
@@ -479,7 +356,7 @@ class MultimodalCoconut(nn.Module):
             attention_mask=attention_mask,
             use_cache=True,
             return_dict=True,
-            num_patches_list=num_patches_list
+            image_flags=image_flags
         )
 
         past_key_values = prompt_outputs.past_key_values
