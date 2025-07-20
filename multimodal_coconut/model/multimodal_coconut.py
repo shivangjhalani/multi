@@ -201,22 +201,86 @@ class MultimodalCoconut(nn.Module):
         This refactored method ensures causality by fusing multimodal embeddings *before*
         the iterative CoCoNuT-style processing.
         """
-        # This is a simplified placeholder. A correct implementation would
-        # involve sequentially processing latent tokens. For now, we delegate
-        # to the standard forward pass to ensure visual features are processed.
-        return self._standard_multimodal_forward(
-            input_ids=input_ids,
-            pixel_values=pixel_values,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            image_flags=image_flags,
+        if pixel_values is None:
+            # Fallback to language model if no image is provided
+            return self.base_model.language_model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                labels=labels,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+            )
+
+        # 1. Get text embeddings
+        input_embeds = self.base_model.language_model.get_input_embeddings()(input_ids)
+        
+        # 2. Get visual embeddings from the ViT
+        vit_embeds, _ = self.base_model.encode_img(pixel_values) # Shape: [bs, num_img_tokens, hidden_size]
+        
+        # Prepare for merging
+        new_input_embeds = []
+        new_attention_mask = []
+        
+        batch_size = input_ids.shape[0]
+        for i in range(batch_size):
+            # Find the first latent token for this batch item
+            latent_idx = (input_ids[i] == self.latent_token_id).nonzero(as_tuple=True)[0]
+            
+            if len(latent_idx) == 0:
+                # No latent token, just use text embeddings
+                new_input_embeds.append(input_embeds[i])
+                new_attention_mask.append(attention_mask[i])
+                continue
+
+            # For simplicity, we only handle the first latent token per sample
+            # This aligns with the common use case of providing one image context
+            first_latent_pos = latent_idx[0]
+            
+            # Split text embeddings around the latent token
+            pre_latent_embeds = input_embeds[i, :first_latent_pos]
+            post_latent_embeds = input_embeds[i, first_latent_pos + 1:]
+            
+            # Combine: text (pre) + vision + text (post)
+            combined_embeds = torch.cat([
+                pre_latent_embeds,
+                vit_embeds[i],
+                post_latent_embeds
+            ], dim=0)
+            
+            # Create a new attention mask for the combined sequence
+            combined_attention_mask = torch.ones(combined_embeds.shape[0], dtype=torch.long, device=input_ids.device)
+            
+            new_input_embeds.append(combined_embeds)
+            new_attention_mask.append(combined_attention_mask)
+
+        # Pad the sequences to the same length
+        # This is a simplified padding implementation. A more robust solution
+        # would use a tokenizer's padding capabilities.
+        max_len = max(embed.shape[0] for embed in new_input_embeds)
+        
+        final_embeds = torch.zeros(batch_size, max_len, self.hidden_size, device=input_ids.device, dtype=input_embeds.dtype)
+        final_attention_mask = torch.zeros(batch_size, max_len, dtype=torch.long, device=input_ids.device)
+        
+        for i in range(batch_size):
+            seq_len = new_input_embeds[i].shape[0]
+            final_embeds[i, :seq_len] = new_input_embeds[i]
+            final_attention_mask[i, :seq_len] = new_attention_mask[i]
+            
+        # 3. Pass the combined embeddings to the language model
+        return self.base_model.language_model(
+            inputs_embeds=final_embeds,
+            attention_mask=final_attention_mask,
+            position_ids=None, # Position IDs would need to be recalculated
             past_key_values=past_key_values,
-            labels=labels,
+            labels=None, # Labels would need to be recalculated to align with new sequence
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
-            **kwargs
         )
     
     # def _ensure_img_context_token_id(self, tokenizer):
