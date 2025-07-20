@@ -269,41 +269,19 @@ class MultimodalCoconut(nn.Module):
         """
         # Handle text-only inputs by using the language model directly
         if pixel_values is None:
-            # For text-only processing, use the language model component directly
-            inputs_embeds = self.base_model.get_input_embeddings()(input_ids)
-            
-            outputs = self.base_model.language_model(
-                inputs_embeds=inputs_embeds,
+            return self.base_model.language_model(
+                input_ids=input_ids,
                 attention_mask=attention_mask,
                 position_ids=position_ids,
                 past_key_values=past_key_values,
+                labels=labels,
                 use_cache=use_cache,
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict
             )
-            
-            # Compute loss if labels are provided
-            loss = None
-            if labels is not None:
-                shift_logits = outputs.logits[..., :-1, :].contiguous()
-                shift_labels = labels[..., 1:].contiguous()
-                loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
-                loss = loss_fct(
-                    shift_logits.view(-1, shift_logits.size(-1)),
-                    shift_labels.view(-1)
-                )
-            
-            return CausalLMOutputWithPast(
-                loss=loss,
-                logits=outputs.logits,
-                past_key_values=outputs.past_key_values,
-                hidden_states=outputs.hidden_states,
-                attentions=outputs.attentions,
-            )
-        
+
         # For multimodal inputs, use the full InternVL3 model
-        # Filter out parameters that InternVL3 doesn't expect
         # Ensure image_flags is properly set for InternVL3
         if image_flags is None and pixel_values is not None:
             # Create default image_flags if not provided
@@ -340,7 +318,6 @@ class MultimodalCoconut(nn.Module):
         dynamic multimodal fusion. It processes the input sequentially.
         """
         self.eval()
-        self.vision_features_added = False
 
         if generation_config is None:
             generation_config = {}
@@ -356,7 +333,8 @@ class MultimodalCoconut(nn.Module):
             attention_mask=attention_mask,
             use_cache=True,
             return_dict=True,
-            image_flags=image_flags
+            image_flags=image_flags,
+            **generate_kwargs
         )
 
         past_key_values = prompt_outputs.past_key_values
