@@ -163,7 +163,6 @@ class MultimodalCoconut(nn.Module):
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
-                num_patches_list=num_patches_list,
                 **kwargs
             )
         
@@ -383,6 +382,7 @@ class MultimodalCoconut(nn.Module):
                                    pixel_values: Optional[torch.FloatTensor] = None,
                                    attention_mask: Optional[torch.Tensor] = None,
                                    position_ids: Optional[torch.LongTensor] = None,
+                                   image_flags: Optional[torch.LongTensor] = None,
                                    past_key_values: Optional[List[torch.FloatTensor]] = None,
                                    labels: Optional[torch.LongTensor] = None,
                                    use_cache: Optional[bool] = None,
@@ -449,11 +449,18 @@ class MultimodalCoconut(nn.Module):
         
         # For multimodal inputs, use the full InternVL3 model
         # Filter out parameters that InternVL3 doesn't expect
+        # Ensure image_flags is properly set for InternVL3
+        if image_flags is None and pixel_values is not None:
+            # Create default image_flags if not provided
+            batch_size = input_ids.shape[0]
+            image_flags = torch.ones(batch_size, 1, dtype=torch.long, device=input_ids.device)
+
         return self.base_model(
             pixel_values=pixel_values,
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
+            image_flags=image_flags,
             past_key_values=past_key_values,
             labels=labels,
             use_cache=use_cache,
