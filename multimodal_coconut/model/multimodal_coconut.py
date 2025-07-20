@@ -214,7 +214,7 @@ class MultimodalCoconut(nn.Module):
         if pixel_values is not None:
             vision_outputs = self.base_model.vision_model(pixel_values, output_hidden_states=True)
             vision_hidden_states = vision_outputs.hidden_states[self.base_model.select_layer]
-            image_embeds = self.base_model.mm_projector(vision_hidden_states)
+            image_embeds = self.base_model.projector(vision_hidden_states)
             vision_features = image_embeds
             logger.debug(f"Processed vision features with shape: {vision_features.shape}")
 
