@@ -212,10 +212,8 @@ class MultimodalCoconut(nn.Module):
         # to ensure the embedding dimensions match the language model's expectations.
         vision_features = None
         if pixel_values is not None:
-            vision_outputs = self.base_model.vision_model(pixel_values, output_hidden_states=True)
-            vision_hidden_states = vision_outputs.hidden_states[self.base_model.select_layer]
-            image_embeds = self.base_model.projector(vision_hidden_states)
-            vision_features = image_embeds
+            # Use the single, correct method to handle all vision processing steps.
+            vision_features = self.base_model.encode_images(pixel_values)
             logger.debug(f"Processed vision features with shape: {vision_features.shape}")
 
         # Group latent tokens by batch and sort them
